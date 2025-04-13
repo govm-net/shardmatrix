@@ -7,6 +7,7 @@ import (
 
 	db "github.com/cometbft/cometbft-db"
 	abcitypes "github.com/cometbft/cometbft/abci/types"
+	"github.com/govm-net/shardmatrix/pkg/tx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,18 +44,18 @@ func TestApplication(t *testing.T) {
 		require.NoError(t, err)
 
 		// 创建交易字节数组
-		tx := make([]byte, 1+len(data))
-		tx[0] = TxTypeTransfer // 转账交易类型
-		copy(tx[1:], data)
+		txBytes := make([]byte, 1+len(data))
+		txBytes[0] = tx.TxTypeTransfer // 转账交易类型
+		copy(txBytes[1:], data)
 
 		// 检查交易
-		checkResp, err := app.CheckTx(context.Background(), &abcitypes.CheckTxRequest{Tx: tx})
+		checkResp, err := app.CheckTx(context.Background(), &abcitypes.CheckTxRequest{Tx: txBytes})
 		require.NoError(t, err)
 		require.Equal(t, uint32(0), checkResp.Code, "CheckTx failed: %s", checkResp.Log)
 
 		// 处理交易
 		finalizeResp, err := app.FinalizeBlock(context.Background(), &abcitypes.FinalizeBlockRequest{
-			Txs: [][]byte{tx},
+			Txs: [][]byte{txBytes},
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, finalizeResp.AppHash)

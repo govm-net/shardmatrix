@@ -7,6 +7,14 @@ import (
 	db "github.com/cometbft/cometbft-db"
 )
 
+// Namespace 命名空间
+const (
+	NamespaceAccount  = "account"
+	NamespaceContract = "contract"
+	NamespaceBlock    = "block"
+	NamespaceTx       = "tx"
+)
+
 // Account represents a user account in the system
 type Account struct {
 	Address string
@@ -35,86 +43,85 @@ func NewState(db db.DB) *State {
 	}
 }
 
+// Get 获取状态
+func (s *State) Get(namespace, key string, value interface{}) error {
+	data, err := s.db.Get([]byte(fmt.Sprintf("%s:%s", namespace, key)))
+	if err != nil {
+		return err
+	}
+
+	if len(data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(data, value)
+}
+
+// Set 保存状态
+func (s *State) Set(namespace, key string, value interface{}) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+
+	return s.db.Set([]byte(fmt.Sprintf("%s:%s", namespace, key)), data)
+}
+
+// Delete 删除状态
+func (s *State) Delete(namespace, key string) error {
+	return s.db.Delete([]byte(fmt.Sprintf("%s:%s", namespace, key)))
+}
+
 // GetAccount retrieves an account from the state
 func (s *State) GetAccount(address string) (*Account, error) {
-	data, err := s.db.Get([]byte(fmt.Sprintf("account:%s", address)))
-	if err != nil {
-		return nil, err
-	}
-
 	var account Account
-	if len(data) == 0 {
-		account.Address = address
-		return &account, nil
-	}
-	if err := json.Unmarshal(data, &account); err != nil {
+	if err := s.Get(NamespaceAccount, address, &account); err != nil {
 		return nil, err
 	}
-
+	if account.Address == "" {
+		account.Address = address
+	}
 	return &account, nil
 }
 
 // SetAccount saves an account to the state
 func (s *State) SetAccount(account *Account) error {
-	data, err := json.Marshal(account)
-	if err != nil {
-		return err
-	}
-
-	return s.db.Set([]byte(fmt.Sprintf("account:%s", account.Address)), data)
+	return s.Set(NamespaceAccount, account.Address, account)
 }
 
 // GetContract retrieves a contract from the state
 func (s *State) GetContract(address string) (*Contract, error) {
-	data, err := s.db.Get([]byte(fmt.Sprintf("contract:%s", address)))
-	if err != nil {
-		return nil, err
-	}
-
 	var contract Contract
-	if err := json.Unmarshal(data, &contract); err != nil {
+	if err := s.Get(NamespaceContract, address, &contract); err != nil {
 		return nil, err
 	}
-
 	return &contract, nil
 }
 
 // SetContract saves a contract to the state
 func (s *State) SetContract(contract *Contract) error {
-	data, err := json.Marshal(contract)
-	if err != nil {
-		return err
-	}
-
-	return s.db.Set([]byte(fmt.Sprintf("contract:%s", contract.Address)), data)
+	return s.Set(NamespaceContract, contract.Address, contract)
 }
 
 // DeleteContract 删除合约
 func (s *State) DeleteContract(address string) error {
-	key := []byte(fmt.Sprintf("contract:%s", address))
-	return s.db.Delete(key)
+	return s.Delete(NamespaceContract, address)
 }
 
 // Hash returns the current state hash
 func (s *State) Hash() ([]byte, error) {
-	// 创建一个迭代器来遍历所有键值对
 	iter, err := s.db.Iterator(nil, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer iter.Close()
 
-	// 收集所有键值对
 	var pairs [][]byte
 	for ; iter.Valid(); iter.Next() {
 		pairs = append(pairs, iter.Key(), iter.Value())
 	}
 
-	// 计算默克尔根哈希
-	// TODO: 使用更高效的默克尔树实现
-	hash := make([]byte, 32) // 32字节的哈希值
+	hash := make([]byte, 32)
 	for _, pair := range pairs {
-		// 简单的哈希计算，实际应该使用更安全的哈希算法
 		for i := range hash {
 			hash[i] ^= pair[i%len(pair)]
 		}

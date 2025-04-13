@@ -7,12 +7,13 @@ import (
 
 	db "github.com/cometbft/cometbft-db"
 	abcitypes "github.com/cometbft/cometbft/abci/types"
+	"github.com/govm-net/shardmatrix/pkg/tx"
 )
 
 // Application represents the ABCI application
 type Application struct {
 	db       db.DB
-	registry *TxRegistry
+	registry *tx.TxRegistry
 	state    *State
 }
 
@@ -22,7 +23,7 @@ var _ abcitypes.Application = (*Application)(nil)
 func NewApplication(db db.DB) *Application {
 	app := &Application{
 		db:       db,
-		registry: DefaultTxRegistry,
+		registry: tx.DefaultTxRegistry,
 		state:    NewState(db),
 	}
 
@@ -47,20 +48,13 @@ func (app *Application) CheckTx(ctx context.Context, req *abcitypes.CheckTxReque
 	}
 
 	// 检查交易类型是否已注册
-	txType := req.Tx[0]
-	process, exists := app.registry.GetProcess(txType)
+	process, exists := app.registry.GetProcessor(req.Tx[0])
 	if !exists {
 		return &abcitypes.CheckTxResponse{Code: 1, Log: "Unknown transaction type"}, nil
 	}
 
-	// 创建交易对象
-	tx := &Transaction{
-		Type: txType,
-		Data: req.Tx[1:],
-	}
-
 	// 验证交易
-	if err := process.Validate(ctx, app.state, tx); err != nil {
+	if err := process.Validate(ctx, app.state.db, req.Tx); err != nil {
 		return &abcitypes.CheckTxResponse{Code: 1, Log: err.Error()}, nil
 	}
 
@@ -70,29 +64,22 @@ func (app *Application) CheckTx(ctx context.Context, req *abcitypes.CheckTxReque
 // PrepareProposal prepares a block proposal
 func (app *Application) PrepareProposal(_ context.Context, req *abcitypes.PrepareProposalRequest) (*abcitypes.PrepareProposalResponse, error) {
 	var txs [][]byte
-	for _, tx := range req.Txs {
-		if len(tx) == 0 {
+	for _, txData := range req.Txs {
+		if len(txData) == 0 {
 			continue
 		}
 
-		txType := tx[0]
-		process, exists := app.registry.GetProcess(txType)
+		process, exists := app.registry.GetProcessor(txData[0])
 		if !exists {
 			continue
 		}
 
-		// 创建交易对象
-		transaction := &Transaction{
-			Type: txType,
-			Data: tx[1:],
-		}
-
 		// 验证交易
-		if err := process.Validate(context.Background(), app.state, transaction); err != nil {
+		if err := process.Validate(context.Background(), app.state.db, txData); err != nil {
 			continue
 		}
 
-		txs = append(txs, tx)
+		txs = append(txs, txData)
 	}
 
 	return &abcitypes.PrepareProposalResponse{
@@ -102,25 +89,21 @@ func (app *Application) PrepareProposal(_ context.Context, req *abcitypes.Prepar
 
 // ProcessProposal processes a block proposal
 func (app *Application) ProcessProposal(_ context.Context, req *abcitypes.ProcessProposalRequest) (*abcitypes.ProcessProposalResponse, error) {
-	for _, tx := range req.Txs {
-		if len(tx) == 0 {
+	for _, txData := range req.Txs {
+		if len(txData) == 0 {
 			continue
 		}
 
-		txType := tx[0]
-		process, exists := app.registry.GetProcess(txType)
+		txType := txData[0]
+		process, exists := app.registry.GetProcessor(txType)
 		if !exists {
 			continue
 		}
 
 		// 创建交易对象
-		transaction := &Transaction{
-			Type: txType,
-			Data: tx[1:],
-		}
 
 		// 验证交易
-		if err := process.Validate(context.Background(), app.state, transaction); err != nil {
+		if err := process.Validate(context.Background(), app.state.db, txData); err != nil {
 			return &abcitypes.ProcessProposalResponse{
 				Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT,
 			}, nil
@@ -134,30 +117,24 @@ func (app *Application) ProcessProposal(_ context.Context, req *abcitypes.Proces
 
 // FinalizeBlock finalizes a block
 func (app *Application) FinalizeBlock(_ context.Context, req *abcitypes.FinalizeBlockRequest) (*abcitypes.FinalizeBlockResponse, error) {
-	for _, tx := range req.Txs {
-		if len(tx) == 0 {
+	for _, txData := range req.Txs {
+		if len(txData) == 0 {
 			continue
 		}
 
-		txType := tx[0]
-		process, exists := app.registry.GetProcess(txType)
+		txType := txData[0]
+		process, exists := app.registry.GetProcessor(txType)
 		if !exists {
 			continue
 		}
 
-		// 创建交易对象
-		transaction := &Transaction{
-			Type: txType,
-			Data: tx[1:],
-		}
-
 		// 验证交易
-		if err := process.Validate(context.Background(), app.state, transaction); err != nil {
+		if err := process.Validate(context.Background(), app.state.db, txData); err != nil {
 			continue
 		}
 
 		// 执行交易
-		if err := process.Execute(context.Background(), app.state, transaction); err != nil {
+		if err := process.Execute(context.Background(), app.state.db, txData); err != nil {
 			continue
 		}
 	}
@@ -175,23 +152,13 @@ func (app *Application) FinalizeBlock(_ context.Context, req *abcitypes.Finalize
 
 // Query handles queries about the application state
 func (app *Application) Query(_ context.Context, req *abcitypes.QueryRequest) (*abcitypes.QueryResponse, error) {
-	state := NewState(app.db)
-
-	// Handle account balance query
-	if req.Path == "balance" {
-		account, err := state.GetAccount(string(req.Data))
-		if err != nil {
-			return &abcitypes.QueryResponse{Code: 1, Log: fmt.Sprintf("Failed to get account: %v", err)}, nil
-		}
-		return &abcitypes.QueryResponse{
-			Code:  0,
-			Value: []byte(fmt.Sprintf("%d", account.Balance)),
-		}, nil
+	val, err := app.state.db.Get([]byte(req.Path))
+	if err != nil {
+		return &abcitypes.QueryResponse{Code: 1, Log: fmt.Sprintf("Failed to get account: %v", err)}, nil
 	}
-
 	return &abcitypes.QueryResponse{
-		Code: 1,
-		Log:  "Unknown query path",
+		Code:  0,
+		Value: val,
 	}, nil
 }
 
