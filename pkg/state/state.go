@@ -43,6 +43,10 @@ func (s *State) GetAccount(address string) (*Account, error) {
 	}
 
 	var account Account
+	if len(data) == 0 {
+		account.Address = address
+		return &account, nil
+	}
 	if err := json.Unmarshal(data, &account); err != nil {
 		return nil, err
 	}
@@ -83,6 +87,12 @@ func (s *State) SetContract(contract *Contract) error {
 	}
 
 	return s.db.Set([]byte(fmt.Sprintf("contract:%s", contract.Address)), data)
+}
+
+// DeleteContract 删除合约
+func (s *State) DeleteContract(address string) error {
+	key := []byte(fmt.Sprintf("contract:%s", address))
+	return s.db.Delete(key)
 }
 
 // Hash returns the current state hash

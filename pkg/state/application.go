@@ -13,6 +13,7 @@ import (
 type Application struct {
 	db       db.DB
 	registry *TxRegistry
+	state    *State
 }
 
 var _ abcitypes.Application = (*Application)(nil)
@@ -22,63 +23,10 @@ func NewApplication(db db.DB) *Application {
 	app := &Application{
 		db:       db,
 		registry: DefaultTxRegistry,
+		state:    NewState(db),
 	}
-
-	// 注册默认交易处理函数
-	app.registry.Register(0x01, handleTransfer) // 转账交易
-	app.registry.Register(0x02, handleContract) // 合约交易
 
 	return app
-}
-
-// handleTransfer 处理转账交易
-func handleTransfer(ctx context.Context, state *State, tx *Transaction) error {
-	var transferData struct {
-		From   string `json:"from"`
-		To     string `json:"to"`
-		Amount uint64 `json:"amount"`
-	}
-
-	if err := json.Unmarshal(tx.Data, &transferData); err != nil {
-		return fmt.Errorf("invalid transfer data: %v", err)
-	}
-
-	// 获取发送方账户
-	sender, err := state.GetAccount(transferData.From)
-	if err != nil {
-		return fmt.Errorf("failed to get sender account: %v", err)
-	}
-
-	// 检查余额
-	if sender.Balance < transferData.Amount {
-		return fmt.Errorf("insufficient balance")
-	}
-
-	// 获取接收方账户
-	receiver, err := state.GetAccount(transferData.To)
-	if err != nil {
-		return fmt.Errorf("failed to get receiver account: %v", err)
-	}
-
-	// 更新余额
-	sender.Balance -= transferData.Amount
-	receiver.Balance += transferData.Amount
-
-	// 保存账户
-	if err := state.SetAccount(sender); err != nil {
-		return fmt.Errorf("failed to save sender account: %v", err)
-	}
-	if err := state.SetAccount(receiver); err != nil {
-		return fmt.Errorf("failed to save receiver account: %v", err)
-	}
-
-	return nil
-}
-
-// handleContract 处理合约交易
-func handleContract(ctx context.Context, state *State, tx *Transaction) error {
-	// TODO: 实现合约交易处理
-	return nil
 }
 
 // Info returns information about the application state
@@ -93,113 +41,131 @@ func (app *Application) Info(_ context.Context, req *abcitypes.InfoRequest) (*ab
 }
 
 // CheckTx validates a transaction
-func (app *Application) CheckTx(_ context.Context, req *abcitypes.CheckTxRequest) (*abcitypes.CheckTxResponse, error) {
+func (app *Application) CheckTx(ctx context.Context, req *abcitypes.CheckTxRequest) (*abcitypes.CheckTxResponse, error) {
 	if len(req.Tx) == 0 {
 		return &abcitypes.CheckTxResponse{Code: 1, Log: "Empty transaction"}, nil
 	}
 
 	// 检查交易类型是否已注册
 	txType := req.Tx[0]
-	if _, exists := app.registry.GetHandler(txType); !exists {
+	process, exists := app.registry.GetProcess(txType)
+	if !exists {
 		return &abcitypes.CheckTxResponse{Code: 1, Log: "Unknown transaction type"}, nil
 	}
 
-	// TODO: 验证签名
-	if !verifySignature(req.Tx) {
-		return &abcitypes.CheckTxResponse{Code: 1, Log: "Invalid signature"}, nil
+	// 创建交易对象
+	tx := &Transaction{
+		Type: txType,
+		Data: req.Tx[1:],
+	}
+
+	// 验证交易
+	if err := process.Validate(ctx, app.state, tx); err != nil {
+		return &abcitypes.CheckTxResponse{Code: 1, Log: err.Error()}, nil
 	}
 
 	return &abcitypes.CheckTxResponse{Code: 0}, nil
 }
 
 // PrepareProposal prepares a block proposal
-func (app *Application) PrepareProposal(ctx context.Context, req *abcitypes.PrepareProposalRequest) (*abcitypes.PrepareProposalResponse, error) {
-	state := NewState(app.db)
-
-	for _, txBytes := range req.Txs {
-		if len(txBytes) == 0 {
+func (app *Application) PrepareProposal(_ context.Context, req *abcitypes.PrepareProposalRequest) (*abcitypes.PrepareProposalResponse, error) {
+	var txs [][]byte
+	for _, tx := range req.Txs {
+		if len(tx) == 0 {
 			continue
 		}
 
-		txType := txBytes[0]
-		handler, exists := app.registry.GetHandler(txType)
+		txType := tx[0]
+		process, exists := app.registry.GetProcess(txType)
 		if !exists {
 			continue
 		}
 
-		// 处理交易
-		tx := &Transaction{
+		// 创建交易对象
+		transaction := &Transaction{
 			Type: txType,
-			Data: txBytes[1:], // 剩余部分作为交易数据
+			Data: tx[1:],
 		}
 
-		if err := handler(ctx, state, tx); err != nil {
+		// 验证交易
+		if err := process.Validate(context.Background(), app.state, transaction); err != nil {
 			continue
 		}
+
+		txs = append(txs, tx)
 	}
 
-	return &abcitypes.PrepareProposalResponse{}, nil
+	return &abcitypes.PrepareProposalResponse{
+		Txs: txs,
+	}, nil
 }
 
 // ProcessProposal processes a block proposal
-func (app *Application) ProcessProposal(ctx context.Context, req *abcitypes.ProcessProposalRequest) (*abcitypes.ProcessProposalResponse, error) {
-	state := NewState(app.db)
-
-	for _, txBytes := range req.Txs {
-		if len(txBytes) == 0 {
-			return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
+func (app *Application) ProcessProposal(_ context.Context, req *abcitypes.ProcessProposalRequest) (*abcitypes.ProcessProposalResponse, error) {
+	for _, tx := range req.Txs {
+		if len(tx) == 0 {
+			continue
 		}
 
-		txType := txBytes[0]
-		handler, exists := app.registry.GetHandler(txType)
+		txType := tx[0]
+		process, exists := app.registry.GetProcess(txType)
 		if !exists {
-			return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
+			continue
 		}
 
-		// 处理交易
-		tx := &Transaction{
+		// 创建交易对象
+		transaction := &Transaction{
 			Type: txType,
-			Data: txBytes[1:], // 剩余部分作为交易数据
+			Data: tx[1:],
 		}
 
-		if err := handler(ctx, state, tx); err != nil {
-			return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
+		// 验证交易
+		if err := process.Validate(context.Background(), app.state, transaction); err != nil {
+			return &abcitypes.ProcessProposalResponse{
+				Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT,
+			}, nil
 		}
 	}
 
-	return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_ACCEPT}, nil
+	return &abcitypes.ProcessProposalResponse{
+		Status: abcitypes.PROCESS_PROPOSAL_STATUS_ACCEPT,
+	}, nil
 }
 
 // FinalizeBlock finalizes a block
-func (app *Application) FinalizeBlock(ctx context.Context, req *abcitypes.FinalizeBlockRequest) (*abcitypes.FinalizeBlockResponse, error) {
-	state := NewState(app.db)
-
-	for _, txBytes := range req.Txs {
-		if len(txBytes) == 0 {
+func (app *Application) FinalizeBlock(_ context.Context, req *abcitypes.FinalizeBlockRequest) (*abcitypes.FinalizeBlockResponse, error) {
+	for _, tx := range req.Txs {
+		if len(tx) == 0 {
 			continue
 		}
 
-		txType := txBytes[0]
-		handler, exists := app.registry.GetHandler(txType)
+		txType := tx[0]
+		process, exists := app.registry.GetProcess(txType)
 		if !exists {
 			continue
 		}
 
-		// 处理交易
-		tx := &Transaction{
+		// 创建交易对象
+		transaction := &Transaction{
 			Type: txType,
-			Data: txBytes[1:], // 剩余部分作为交易数据
+			Data: tx[1:],
 		}
 
-		if err := handler(ctx, state, tx); err != nil {
+		// 验证交易
+		if err := process.Validate(context.Background(), app.state, transaction); err != nil {
+			continue
+		}
+
+		// 执行交易
+		if err := process.Execute(context.Background(), app.state, transaction); err != nil {
 			continue
 		}
 	}
 
-	// 获取当前状态的哈希
-	hash, err := state.Hash()
+	// 计算状态哈希
+	hash, err := app.state.Hash()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get state hash: %v", err)
+		return nil, fmt.Errorf("failed to calculate state hash: %v", err)
 	}
 
 	return &abcitypes.FinalizeBlockResponse{
@@ -227,12 +193,6 @@ func (app *Application) Query(_ context.Context, req *abcitypes.QueryRequest) (*
 		Code: 1,
 		Log:  "Unknown query path",
 	}, nil
-}
-
-// verifySignature verifies the transaction signature
-func verifySignature(_ []byte) bool {
-	// TODO: Implement signature verification
-	return true
 }
 
 // GetAccount retrieves an account from the database
