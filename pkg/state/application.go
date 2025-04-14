@@ -54,7 +54,7 @@ func (app *Application) CheckTx(ctx context.Context, req *abcitypes.CheckTxReque
 	}
 
 	// 验证交易
-	if err := process.Validate(ctx, app.state.db, req.Tx); err != nil {
+	if err := process.Validate(ctx, app.db, req.Tx); err != nil {
 		return &abcitypes.CheckTxResponse{Code: 1, Log: err.Error()}, nil
 	}
 
@@ -75,7 +75,7 @@ func (app *Application) PrepareProposal(_ context.Context, req *abcitypes.Prepar
 		}
 
 		// 验证交易
-		if err := process.Validate(context.Background(), app.state.db, txData); err != nil {
+		if err := process.Validate(context.Background(), app.db, txData); err != nil {
 			continue
 		}
 
@@ -88,7 +88,7 @@ func (app *Application) PrepareProposal(_ context.Context, req *abcitypes.Prepar
 }
 
 // ProcessProposal processes a block proposal
-func (app *Application) ProcessProposal(_ context.Context, req *abcitypes.ProcessProposalRequest) (*abcitypes.ProcessProposalResponse, error) {
+func (app *Application) ProcessProposal(ctx context.Context, req *abcitypes.ProcessProposalRequest) (*abcitypes.ProcessProposalResponse, error) {
 	for _, txData := range req.Txs {
 		if len(txData) == 0 {
 			continue
@@ -100,10 +100,8 @@ func (app *Application) ProcessProposal(_ context.Context, req *abcitypes.Proces
 			continue
 		}
 
-		// 创建交易对象
-
 		// 验证交易
-		if err := process.Validate(context.Background(), app.state.db, txData); err != nil {
+		if err := process.Validate(ctx, app.db, txData); err != nil {
 			return &abcitypes.ProcessProposalResponse{
 				Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT,
 			}, nil
@@ -116,25 +114,24 @@ func (app *Application) ProcessProposal(_ context.Context, req *abcitypes.Proces
 }
 
 // FinalizeBlock finalizes a block
-func (app *Application) FinalizeBlock(_ context.Context, req *abcitypes.FinalizeBlockRequest) (*abcitypes.FinalizeBlockResponse, error) {
+func (app *Application) FinalizeBlock(ctx context.Context, req *abcitypes.FinalizeBlockRequest) (*abcitypes.FinalizeBlockResponse, error) {
 	for _, txData := range req.Txs {
 		if len(txData) == 0 {
 			continue
 		}
 
-		txType := txData[0]
-		process, exists := app.registry.GetProcessor(txType)
+		process, exists := app.registry.GetProcessor(txData[0])
 		if !exists {
 			continue
 		}
 
 		// 验证交易
-		if err := process.Validate(context.Background(), app.state.db, txData); err != nil {
+		if err := process.Validate(ctx, app.db, txData); err != nil {
 			continue
 		}
 
 		// 执行交易
-		if err := process.Execute(context.Background(), app.state.db, txData); err != nil {
+		if err := process.Execute(ctx, app.db, txData); err != nil {
 			continue
 		}
 	}
@@ -152,7 +149,7 @@ func (app *Application) FinalizeBlock(_ context.Context, req *abcitypes.Finalize
 
 // Query handles queries about the application state
 func (app *Application) Query(_ context.Context, req *abcitypes.QueryRequest) (*abcitypes.QueryResponse, error) {
-	val, err := app.state.db.Get([]byte(req.Path))
+	val, err := app.db.Get([]byte(req.Path))
 	if err != nil {
 		return &abcitypes.QueryResponse{Code: 1, Log: fmt.Sprintf("Failed to get account: %v", err)}, nil
 	}
