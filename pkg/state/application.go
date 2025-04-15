@@ -89,22 +89,25 @@ func (app *Application) PrepareProposal(_ context.Context, req *abcitypes.Prepar
 
 // ProcessProposal processes a block proposal
 func (app *Application) ProcessProposal(ctx context.Context, req *abcitypes.ProcessProposalRequest) (*abcitypes.ProcessProposalResponse, error) {
+	out := abcitypes.ProcessProposalResponse{
+		Status: abcitypes.PROCESS_PROPOSAL_STATUS_ACCEPT,
+	}
 	for _, txData := range req.Txs {
 		if len(txData) == 0 {
-			continue
+			out.Status = abcitypes.PROCESS_PROPOSAL_STATUS_REJECT
+			return &out, nil
 		}
 
-		txType := txData[0]
-		process, exists := app.registry.GetProcessor(txType)
+		process, exists := app.registry.GetProcessor(txData[0])
 		if !exists {
-			continue
+			out.Status = abcitypes.PROCESS_PROPOSAL_STATUS_REJECT
+			return &out, nil
 		}
 
 		// 验证交易
 		if err := process.Validate(ctx, app.db, txData); err != nil {
-			return &abcitypes.ProcessProposalResponse{
-				Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT,
-			}, nil
+			out.Status = abcitypes.PROCESS_PROPOSAL_STATUS_REJECT
+			return &out, nil
 		}
 	}
 
