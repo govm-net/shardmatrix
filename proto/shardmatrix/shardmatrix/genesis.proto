@@ -1,0 +1,17 @@
+syntax = "proto3";
+package shardmatrix.shardmatrix;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+import "shardmatrix/shardmatrix/params.proto";
+
+option go_package = "github.com/govm-net/shardmatrix/x/shardmatrix/types";
+
+// GenesisState defines the shardmatrix module's genesis state.
+message GenesisState {
+  // params defines all the parameters of the module.
+  Params params = 1 [
+    (gogoproto.nullable) = false,
+    (amino.dont_omitempty) = true
+  ];
+}
