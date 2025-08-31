@@ -5,25 +5,35 @@ import (
 )
 
 func TestNewTransaction(t *testing.T) {
-	// 创建新交易
-	from := []byte("from_address")
-	to := []byte("to_address")
-	fee := uint64(100)
+	// 创建测试数据
+	from := AddressFromPublicKey([]byte("from_public_key"))
+	to := AddressFromPublicKey([]byte("to_public_key"))
+	amount := uint64(100)
+	fee := uint64(10)
+	nonce := uint64(1)
 	data := []byte("transaction_data")
 
-	tx := NewTransaction(from, to, fee, data)
+	tx := NewTransaction(from, to, amount, fee, nonce, data)
 
 	// 验证交易字段
-	if string(tx.From) != string(from) {
-		t.Errorf("Expected from address %s, got %s", string(from), string(tx.From))
+	if tx.From != from {
+		t.Errorf("Expected from address %x, got %x", from, tx.From)
 	}
 
-	if string(tx.To) != string(to) {
-		t.Errorf("Expected to address %s, got %s", string(to), string(tx.To))
+	if tx.To != to {
+		t.Errorf("Expected to address %x, got %x", to, tx.To)
+	}
+
+	if tx.Amount != amount {
+		t.Errorf("Expected amount %d, got %d", amount, tx.Amount)
 	}
 
 	if tx.Fee != fee {
 		t.Errorf("Expected fee %d, got %d", fee, tx.Fee)
+	}
+
+	if tx.Nonce != nonce {
+		t.Errorf("Expected nonce %d, got %d", nonce, tx.Nonce)
 	}
 
 	if string(tx.Data) != string(data) {
@@ -38,34 +48,40 @@ func TestNewTransaction(t *testing.T) {
 
 func TestTransactionHash(t *testing.T) {
 	// 创建交易
-	tx := NewTransaction([]byte("from"), []byte("to"), 100, []byte("data"))
+	from := AddressFromPublicKey([]byte("from_public_key"))
+	to := AddressFromPublicKey([]byte("to_public_key"))
+	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
 
 	// 计算哈希
 	hash1 := tx.Hash()
 	hash2 := tx.Hash()
 
 	// 验证哈希一致性
-	if string(hash1) != string(hash2) {
+	if hash1 != hash2 {
 		t.Errorf("Transaction hash should be consistent, got %x and %x", hash1, hash2)
 	}
 
 	// 验证哈希长度
-	if len(hash1) != 32 {
-		t.Errorf("Expected hash length 32, got %d", len(hash1))
+	if len(hash1.Bytes()) != 32 {
+		t.Errorf("Expected hash length 32, got %d", len(hash1.Bytes()))
 	}
 
 	// 验证不同交易有不同的哈希
-	tx2 := NewTransaction([]byte("from2"), []byte("to2"), 200, []byte("data2"))
+	from2 := AddressFromPublicKey([]byte("from2_public_key"))
+	to2 := AddressFromPublicKey([]byte("to2_public_key"))
+	tx2 := NewTransaction(from2, to2, 200, 20, 2, []byte("data2"))
 	hash3 := tx2.Hash()
 
-	if string(hash1) == string(hash3) {
+	if hash1 == hash3 {
 		t.Errorf("Different transactions should have different hashes")
 	}
 }
 
 func TestTransactionSign(t *testing.T) {
 	// 创建交易
-	tx := NewTransaction([]byte("from"), []byte("to"), 100, []byte("data"))
+	from := AddressFromPublicKey([]byte("from_public_key"))
+	to := AddressFromPublicKey([]byte("to_public_key"))
+	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
 
 	// 签名前验证签名为空
 	if len(tx.Signature) != 0 {
@@ -87,7 +103,9 @@ func TestTransactionSign(t *testing.T) {
 
 func TestTransactionVerify(t *testing.T) {
 	// 创建交易
-	tx := NewTransaction([]byte("from"), []byte("to"), 100, []byte("data"))
+	from := AddressFromPublicKey([]byte("from_public_key"))
+	to := AddressFromPublicKey([]byte("to_public_key"))
+	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
 
 	// 签名交易
 	privateKey := []byte("private_key")
@@ -104,48 +122,100 @@ func TestTransactionVerify(t *testing.T) {
 }
 
 func TestTransactionIsValid(t *testing.T) {
-	// 测试有效交易
-	validTx := NewTransaction([]byte("from"), []byte("to"), 100, []byte("data"))
+	// 创建有效交易
+	from := AddressFromPublicKey([]byte("from_public_key"))
+	to := AddressFromPublicKey([]byte("to_public_key"))
+	validTx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
+	validTx.Sign([]byte("private_key")) // 添加签名
+
 	if !validTx.IsValid() {
 		t.Errorf("Valid transaction should pass validation")
 	}
 
 	// 测试无效交易 - 缺少发送方
-	invalidTx1 := NewTransaction([]byte{}, []byte("to"), 100, []byte("data"))
+	invalidTx1 := NewTransaction(Address{}, to, 100, 10, 1, []byte("data"))
+	invalidTx1.Sign([]byte("private_key"))
 	if invalidTx1.IsValid() {
 		t.Errorf("Transaction without from address should fail validation")
 	}
 
 	// 测试无效交易 - 缺少接收方
-	invalidTx2 := NewTransaction([]byte("from"), []byte{}, 100, []byte("data"))
+	invalidTx2 := NewTransaction(from, Address{}, 100, 10, 1, []byte("data"))
+	invalidTx2.Sign([]byte("private_key"))
 	if invalidTx2.IsValid() {
 		t.Errorf("Transaction without to address should fail validation")
 	}
 
-	// 测试无效交易 - 负手续费
-	invalidTx3 := NewTransaction([]byte("from"), []byte("to"), 0, []byte("data"))
-	// 注意：当前实现允许0手续费，实际可能需要调整
-	if !invalidTx3.IsValid() {
-		t.Errorf("Transaction with zero fee should be valid")
+	// 测试无效交易 - 手续费为0
+	invalidTx3 := NewTransaction(from, to, 100, 0, 1, []byte("data"))
+	invalidTx3.Sign([]byte("private_key"))
+	if invalidTx3.IsValid() {
+		t.Errorf("Transaction with zero fee should fail validation")
+	}
+
+	// 测试无效交易 - 没有签名
+	invalidTx4 := NewTransaction(from, to, 100, 10, 1, []byte("data"))
+	if invalidTx4.IsValid() {
+		t.Errorf("Transaction without signature should fail validation")
 	}
 }
 
 func TestTransactionGetID(t *testing.T) {
 	// 创建交易
-	tx := NewTransaction([]byte("from"), []byte("to"), 100, []byte("data"))
+	from := AddressFromPublicKey([]byte("from_public_key"))
+	to := AddressFromPublicKey([]byte("to_public_key"))
+	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
 
 	// 获取交易ID
 	id1 := tx.GetID()
 	id2 := tx.GetID()
 
 	// 验证ID一致性
-	if string(id1) != string(id2) {
+	if id1 != id2 {
 		t.Errorf("Transaction ID should be consistent")
 	}
 
 	// 验证ID与哈希相同
 	hash := tx.Hash()
-	if string(id1) != string(hash) {
+	if id1 != hash {
 		t.Errorf("Transaction ID should equal transaction hash")
+	}
+}
+
+func TestNewTransferTransaction(t *testing.T) {
+	// 创建转账交易
+	from := AddressFromPublicKey([]byte("from_public_key"))
+	to := AddressFromPublicKey([]byte("to_public_key"))
+	tx := NewTransferTransaction(from, to, 100, 10, 1)
+
+	// 验证转账交易属性
+	if tx.From != from {
+		t.Errorf("Expected from address %x, got %x", from, tx.From)
+	}
+
+	if tx.To != to {
+		t.Errorf("Expected to address %x, got %x", to, tx.To)
+	}
+
+	if tx.Amount != 100 {
+		t.Errorf("Expected amount 100, got %d", tx.Amount)
+	}
+
+	if tx.Fee != 10 {
+		t.Errorf("Expected fee 10, got %d", tx.Fee)
+	}
+
+	if tx.Nonce != 1 {
+		t.Errorf("Expected nonce 1, got %d", tx.Nonce)
+	}
+
+	// 转账交易不应该有数据
+	if len(tx.Data) != 0 {
+		t.Errorf("Transfer transaction should have no data")
+	}
+
+	// 验证是转账交易
+	if !tx.IsTransfer() {
+		t.Errorf("Should be identified as transfer transaction")
 	}
 }

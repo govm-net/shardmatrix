@@ -1,69 +1,130 @@
 package types
 
 import (
-	"bytes"
 	"crypto/sha256"
-	"encoding/gob"
+	"encoding/json"
 	"time"
 )
 
 // BlockHeader 区块头结构
 type BlockHeader struct {
-	Number    uint64 `json:"number"`     // 区块序号
-	Timestamp int64  `json:"timestamp"`  // 时间戳
-	PrevHash  []byte `json:"prev_hash"`  // 前一个区块哈希
-	ChainID   uint64 `json:"chain_id"`   // 链ID
-	TxRoot    []byte `json:"tx_root"`    // 交易RootHash
-	StateRoot []byte `json:"state_root"` // 状态RootHash
-	Validator []byte `json:"validator"`  // 验证者地址
-	Signature []byte `json:"signature"`  // 验证者签名
+	Number    uint64  `json:"number"`     // 区块序号
+	Timestamp int64   `json:"timestamp"`  // 时间戳
+	PrevHash  Hash    `json:"prev_hash"`  // 前一个区块哈希
+	TxRoot    Hash    `json:"tx_root"`    // 交易RootHash
+	StateRoot Hash    `json:"state_root"` // 状态RootHash
+	Validator Address `json:"validator"`  // 验证者地址
+	Signature []byte  `json:"signature"`  // 验证者签名
 }
 
 // Block 区块结构
 type Block struct {
 	Header       *BlockHeader `json:"header"`
-	Transactions [][]byte     `json:"transactions"` // 交易哈希列表
+	Transactions []Hash       `json:"transactions"` // 交易哈希列表
 }
 
 // NewBlock 创建新区块
-func NewBlock(number uint64, prevHash []byte, chainID uint64, validator []byte) *Block {
+func NewBlock(number uint64, prevHash Hash, validator Address) *Block {
 	return &Block{
 		Header: &BlockHeader{
 			Number:    number,
 			Timestamp: time.Now().Unix(),
 			PrevHash:  prevHash,
-			ChainID:   chainID,
 			Validator: validator,
+			TxRoot:    EmptyHash(),
+			StateRoot: EmptyHash(),
 		},
-		Transactions: make([][]byte, 0),
+		Transactions: make([]Hash, 0),
 	}
+}
+
+// NewGenesisBlock 创建初始区块
+func NewGenesisBlock(validator Address) *Block {
+	return NewBlock(0, EmptyHash(), validator)
 }
 
 // Hash 计算区块哈希
-func (b *Block) Hash() []byte {
-	// 使用gob序列化区块头
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	enc.Encode(b.Header)
+func (b *Block) Hash() Hash {
+	// 序列化区块头进行哈希计算
+	headerBytes, err := json.Marshal(b.Header)
+	if err != nil {
+		// 如果序列化失败，返回空哈希
+		return EmptyHash()
+	}
 
-	hash := sha256.Sum256(buf.Bytes())
-	return hash[:]
+	return CalculateHash(headerBytes)
 }
 
 // AddTransaction 添加交易到区块
-func (b *Block) AddTransaction(txHash []byte) {
+func (b *Block) AddTransaction(txHash Hash) {
 	b.Transactions = append(b.Transactions, txHash)
+	// 更新交易Merkle根
+	b.Header.TxRoot = b.CalculateTxRoot()
 }
 
 // CalculateTxRoot 计算交易Merkle根
-func (b *Block) CalculateTxRoot() []byte {
+func (b *Block) CalculateTxRoot() Hash {
 	if len(b.Transactions) == 0 {
-		return make([]byte, 32)
+		return EmptyHash()
 	}
 
-	// 直接使用交易哈希计算Merkle根
-	root := calculateMerkleRoot(b.Transactions)
-	return root
+	// 转换为[][]byte进行计算
+	hashes := make([][]byte, len(b.Transactions))
+	for i, txHash := range b.Transactions {
+		hashes[i] = txHash.Bytes()
+	}
+
+	root := calculateMerkleRoot(hashes)
+	return NewHash(root)
+}
+
+// IsValid 验证区块是否有效
+func (b *Block) IsValid() bool {
+	if b.Header == nil {
+		return false
+	}
+
+	// 检查时间戳
+	if b.Header.Timestamp <= 0 {
+		return false
+	}
+
+	// 检查验证者地址
+	if b.Header.Validator.IsZero() {
+		return false
+	}
+
+	// 验证交易Merkle根
+	expectedTxRoot := b.CalculateTxRoot()
+	if !b.Header.TxRoot.Equal(expectedTxRoot) {
+		return false
+	}
+
+	return true
+}
+
+// GetTransactionCount 获取交易数量
+func (b *Block) GetTransactionCount() int {
+	return len(b.Transactions)
+}
+
+// HasTransaction 检查区块是否包含指定交易
+func (b *Block) HasTransaction(txHash Hash) bool {
+	for _, hash := range b.Transactions {
+		if hash.Equal(txHash) {
+			return true
+		}
+	}
+	return false
+}
+
+// Size 获取区块大小（字节）
+func (b *Block) Size() int {
+	data, err := json.Marshal(b)
+	if err != nil {
+		return 0
+	}
+	return len(data)
 }
 
 // calculateMerkleRoot 计算Merkle根
@@ -90,4 +151,44 @@ func calculateMerkleRoot(hashes [][]byte) []byte {
 	}
 
 	return calculateMerkleRoot(nextLevel)
+}
+
+// Serialize 序列化区块为JSON
+func (b *Block) Serialize() ([]byte, error) {
+	return json.Marshal(b)
+}
+
+// Deserialize 从 JSON 反序列化区块
+func (b *Block) Deserialize(data []byte) error {
+	return json.Unmarshal(data, b)
+}
+
+// DeserializeBlock 从 JSON 创建区块
+func DeserializeBlock(data []byte) (*Block, error) {
+	var block Block
+	err := json.Unmarshal(data, &block)
+	if err != nil {
+		return nil, err
+	}
+	return &block, nil
+}
+
+// Serialize 序列化区块头为JSON
+func (bh *BlockHeader) Serialize() ([]byte, error) {
+	return json.Marshal(bh)
+}
+
+// Deserialize 从 JSON 反序列化区块头
+func (bh *BlockHeader) Deserialize(data []byte) error {
+	return json.Unmarshal(data, bh)
+}
+
+// DeserializeBlockHeader 从 JSON 创建区块头
+func DeserializeBlockHeader(data []byte) (*BlockHeader, error) {
+	var header BlockHeader
+	err := json.Unmarshal(data, &header)
+	if err != nil {
+		return nil, err
+	}
+	return &header, nil
 }

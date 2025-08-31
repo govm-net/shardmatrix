@@ -56,7 +56,30 @@ fmt:
 .PHONY: lint
 lint:
 	@echo "Running linter..."
-	golangci-lint run
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not installed. Installing..."; \
+		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
+		golangci-lint run; \
+	fi
+
+# 竞态条件检查
+.PHONY: test-race
+test-race:
+	@echo "Running tests with race detection..."
+	go test -race -v ./pkg/...
+
+# 基准测试
+.PHONY: bench
+bench:
+	@echo "Running benchmarks..."
+	go test -bench=. -benchmem ./pkg/...
+
+# 完整质量检查
+.PHONY: quality
+quality: fmt lint test test-race
+	@echo "All quality checks completed successfully!"
 
 # 清理构建文件
 .PHONY: clean

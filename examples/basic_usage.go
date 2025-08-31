@@ -11,18 +11,28 @@ func main() {
 
 	// 1. 创建交易
 	fmt.Println("\n1. 创建交易...")
+
+	// 创建地址
+	aliceAddr := types.AddressFromPublicKey([]byte("alice_public_key"))
+	bobAddr := types.AddressFromPublicKey([]byte("bob_public_key"))
+	charlieAddr := types.AddressFromPublicKey([]byte("charlie_public_key"))
+
 	tx1 := types.NewTransaction(
-		[]byte("alice_address"),
-		[]byte("bob_address"),
-		100, // 手续费
-		[]byte("transfer 50 tokens"),
+		aliceAddr,                    // 发送方地址
+		bobAddr,                      // 接收方地址
+		50,                           // 转账金额
+		10,                           // 手续费
+		1,                            // nonce
+		[]byte("transfer 50 tokens"), // 交易数据
 	)
 
 	tx2 := types.NewTransaction(
-		[]byte("bob_address"),
-		[]byte("charlie_address"),
-		50, // 手续费
-		[]byte("transfer 25 tokens"),
+		bobAddr,                      // 发送方地址
+		charlieAddr,                  // 接收方地址
+		25,                           // 转账金额
+		5,                            // 手续费
+		1,                            // nonce
+		[]byte("transfer 25 tokens"), // 交易数据
 	)
 
 	// 签名交易
@@ -34,11 +44,15 @@ func main() {
 
 	// 2. 创建区块
 	fmt.Println("\n2. 创建区块...")
+
+	// 创建前一个区块哈希和验证者地址
+	prevHash := types.NewHash([]byte("genesis_block_hash"))
+	validatorAddr := types.AddressFromPublicKey([]byte("validator_public_key"))
+
 	block := types.NewBlock(
-		1,                            // 区块高度
-		[]byte("genesis_block_hash"), // 前一个区块哈希
-		1,                            // 链ID
-		[]byte("validator_address"),  // 验证者地址
+		1,             // 区块高度
+		prevHash,      // 前一个区块哈希
+		validatorAddr, // 验证者地址
 	)
 
 	// 添加交易到区块
@@ -70,7 +84,7 @@ func main() {
 	// 4. 验证区块
 	fmt.Println("\n4. 验证区块...")
 	blockHash := block.Hash()
-	if len(blockHash) == 32 {
+	if len(blockHash.Bytes()) == 32 {
 		fmt.Println("区块哈希计算正确")
 	} else {
 		fmt.Println("区块哈希计算错误")
@@ -80,7 +94,6 @@ func main() {
 	fmt.Println("\n5. 区块信息:")
 	fmt.Printf("  区块高度: %d\n", block.Header.Number)
 	fmt.Printf("  时间戳: %d\n", block.Header.Timestamp)
-	fmt.Printf("  链ID: %d\n", block.Header.ChainID)
 	fmt.Printf("  前一个区块: %x\n", block.Header.PrevHash)
 	fmt.Printf("  验证者: %x\n", block.Header.Validator)
 	fmt.Printf("  交易根: %x\n", block.Header.TxRoot)

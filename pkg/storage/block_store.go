@@ -12,13 +12,13 @@ type BlockStore interface {
 	PutBlock(block *types.Block) error
 
 	// GetBlock 获取区块
-	GetBlock(blockHash []byte) (*types.Block, error)
+	GetBlock(blockHash types.Hash) (*types.Block, error)
 
 	// GetBlockByHeight 根据高度获取区块
 	GetBlockByHeight(height uint64) (*types.Block, error)
 
 	// HasBlock 检查区块是否存在
-	HasBlock(blockHash []byte) bool
+	HasBlock(blockHash types.Hash) bool
 
 	// GetLatestBlock 获取最新区块
 	GetLatestBlock() (*types.Block, error)
@@ -30,22 +30,22 @@ type BlockStore interface {
 // MemoryBlockStore 内存区块存储（用于测试）
 type MemoryBlockStore struct {
 	blocks     map[string]*types.Block // 按哈希存储
-	heights    map[uint64][]byte       // 按高度存储
-	latestHash []byte
+	heights    map[uint64]types.Hash   // 按高度存储
+	latestHash types.Hash
 }
 
 // NewMemoryBlockStore 创建内存区块存储
 func NewMemoryBlockStore() *MemoryBlockStore {
 	return &MemoryBlockStore{
 		blocks:  make(map[string]*types.Block),
-		heights: make(map[uint64][]byte),
+		heights: make(map[uint64]types.Hash),
 	}
 }
 
 // PutBlock 存储区块
 func (mbs *MemoryBlockStore) PutBlock(block *types.Block) error {
 	blockHash := block.Hash()
-	hashStr := fmt.Sprintf("%x", blockHash)
+	hashStr := blockHash.String()
 
 	// 存储区块
 	mbs.blocks[hashStr] = block
@@ -54,7 +54,7 @@ func (mbs *MemoryBlockStore) PutBlock(block *types.Block) error {
 	mbs.heights[block.Header.Number] = blockHash
 
 	// 更新最新区块
-	if mbs.latestHash == nil || block.Header.Number > mbs.getLatestHeight() {
+	if mbs.latestHash.IsZero() || block.Header.Number > mbs.getLatestHeight() {
 		mbs.latestHash = blockHash
 	}
 
@@ -62,8 +62,8 @@ func (mbs *MemoryBlockStore) PutBlock(block *types.Block) error {
 }
 
 // GetBlock 获取区块
-func (mbs *MemoryBlockStore) GetBlock(blockHash []byte) (*types.Block, error) {
-	hashStr := fmt.Sprintf("%x", blockHash)
+func (mbs *MemoryBlockStore) GetBlock(blockHash types.Hash) (*types.Block, error) {
+	hashStr := blockHash.String()
 	block, exists := mbs.blocks[hashStr]
 	if !exists {
 		return nil, fmt.Errorf("block not found: %x", blockHash)
@@ -81,15 +81,15 @@ func (mbs *MemoryBlockStore) GetBlockByHeight(height uint64) (*types.Block, erro
 }
 
 // HasBlock 检查区块是否存在
-func (mbs *MemoryBlockStore) HasBlock(blockHash []byte) bool {
-	hashStr := fmt.Sprintf("%x", blockHash)
+func (mbs *MemoryBlockStore) HasBlock(blockHash types.Hash) bool {
+	hashStr := blockHash.String()
 	_, exists := mbs.blocks[hashStr]
 	return exists
 }
 
 // GetLatestBlock 获取最新区块
 func (mbs *MemoryBlockStore) GetLatestBlock() (*types.Block, error) {
-	if mbs.latestHash == nil {
+	if mbs.latestHash.IsZero() {
 		return nil, fmt.Errorf("no blocks in store")
 	}
 	return mbs.GetBlock(mbs.latestHash)
@@ -97,7 +97,7 @@ func (mbs *MemoryBlockStore) GetLatestBlock() (*types.Block, error) {
 
 // getLatestHeight 获取最新区块高度
 func (mbs *MemoryBlockStore) getLatestHeight() uint64 {
-	if mbs.latestHash == nil {
+	if mbs.latestHash.IsZero() {
 		return 0
 	}
 
