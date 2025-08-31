@@ -5,9 +5,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/govm-net/shardmatrix/pkg/config"
+	"github.com/govm-net/shardmatrix/pkg/consensus"
 	"github.com/govm-net/shardmatrix/pkg/node"
+	"github.com/govm-net/shardmatrix/pkg/types"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -52,6 +55,55 @@ func runNode(cmd *cobra.Command, args []string) error {
 	n, err := node.New(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create node: %v", err)
+	}
+
+	// 如果配置了DPoS共识，设置共识机制
+	if cfg.Consensus.Type == "dpos" || cfg.Consensus.Type == "pos" {
+		logrus.Info("Setting up DPoS consensus...")
+
+		// 创建DPoS配置
+		dposConfig := consensus.DefaultDPoSConfig()
+		dposConfig.MinStake = 1000 // 降低最小质押用于测试
+		dposConfig.ValidatorCount = cfg.Consensus.ValidatorCount
+		dposConfig.BlockInterval = time.Duration(cfg.Blockchain.BlockInterval) * time.Second
+
+		// 创建DPoS共识
+		dpos := consensus.NewDPoSConsensus(dposConfig)
+		n.GetBlockchain().SetConsensus(dpos)
+
+		// 启动共识
+		if err := n.GetBlockchain().GetConsensus().Start(); err != nil {
+			return fmt.Errorf("failed to start consensus: %v", err)
+		}
+
+		// 创建示例验证者用于单节点测试
+		if len(cfg.Consensus.Validators) == 0 {
+			logrus.Info("Creating demo validator for single node testing...")
+			validatorAddr := types.GenerateAddress()
+			if err := dpos.RegisterValidator(validatorAddr, 10000, 0.1); err != nil {
+				logrus.Warnf("Failed to register demo validator: %v", err)
+			} else {
+				logrus.Infof("Demo validator registered: %s", validatorAddr.String())
+			}
+		} else {
+			// 注册配置文件中的验证者
+			for i, validatorStr := range cfg.Consensus.Validators {
+				addr, err := types.AddressFromString(validatorStr)
+				if err != nil {
+					logrus.Warnf("Invalid validator address: %s", validatorStr)
+					continue
+				}
+
+				stake := uint64(5000 + i*1000)
+				commission := 0.1 + float64(i)*0.05
+
+				if err := dpos.RegisterValidator(addr, stake, commission); err != nil {
+					logrus.Warnf("Failed to register validator %s: %v", validatorStr, err)
+				} else {
+					logrus.Infof("Validator registered: %s (stake: %d)", validatorStr, stake)
+				}
+			}
+		}
 	}
 
 	// 启动节点

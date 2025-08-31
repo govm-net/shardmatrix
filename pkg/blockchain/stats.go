@@ -84,9 +84,9 @@ func (bc *Blockchain) calculateDetailedStats(stats *ChainStats) error {
 	}
 
 	fromHeight := stats.Height - uint64(sampleSize-1)
-	if fromHeight < 0 {
-		fromHeight = 0
-	}
+	// if fromHeight < 0 {
+	// 	fromHeight = 0
+	// }
 
 	recentBlocks, err := bc.GetBlockRange(fromHeight, stats.Height)
 	if err != nil {

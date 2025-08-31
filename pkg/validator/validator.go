@@ -116,6 +116,11 @@ func (v *Validator) GetConfig() *ValidationConfig {
 	return v.config
 }
 
+// GetValidatorStore 获取验证者存储
+func (v *Validator) GetValidatorStore() storage.ValidatorStoreInterface {
+	return v.blockValidator.validatorStore
+}
+
 // UpdateConfig 更新验证配置
 func (v *Validator) UpdateConfig(config *ValidationConfig) {
 	if config != nil {

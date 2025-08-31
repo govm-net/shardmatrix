@@ -334,7 +334,7 @@ func (bc *Blockchain) findForkExtension(block *types.Block) *Fork {
 }
 
 // calculateBlockWork 计算区块工作量
-func (bc *Blockchain) calculateBlockWork(block *types.Block) uint64 {
+func (bc *Blockchain) calculateBlockWork(_ *types.Block) uint64 {
 	// 简单实现：每个区块工作量为1
 	// 在真实实现中，这应该基于难度
 	return 1

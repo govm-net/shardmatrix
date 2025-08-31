@@ -14,8 +14,8 @@ blockchain:
 
 # 共识配置
 consensus:
-  type: "pos"  # 共识类型：pos
-  validator_count: 21  # 验证者数量
+  type: "dpos"  # 共识类型：dpos
+  validator_count: 1  # 验证者数量
   validators: []  # 验证者地址列表
 
 # 存储配置

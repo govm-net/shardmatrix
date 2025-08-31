@@ -294,7 +294,7 @@ func (bc *Blockchain) LocateCommonAncestor(blockHashes []types.Hash) (types.Hash
 	}
 
 	// 从最低高度开始向上查找
-	for height := minHeight; height >= 0; height-- {
+	for height := minHeight; ; height-- {
 		// 获取该高度的区块
 		block, err := bc.blockStore.GetBlockByHeight(height)
 		if err != nil {

@@ -26,3 +26,5 @@ go.work.sum
 .cursor/
 node
 backup/
+bin/
+build/

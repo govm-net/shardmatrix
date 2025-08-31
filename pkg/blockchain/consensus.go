@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/govm-net/shardmatrix/pkg/consensus"
+	"github.com/govm-net/shardmatrix/pkg/storage"
 	"github.com/govm-net/shardmatrix/pkg/types"
 )
 
@@ -12,11 +13,10 @@ import (
 type ConsensusIntegration struct {
 	blockchain *Blockchain
 	dpos       *consensus.DPoSConsensus
-	
+
 	// 区块生产状态
-	isProducing     bool
 	currentProducer types.Address
-	
+
 	// 配置
 	enableConsensus bool
 }
@@ -25,7 +25,7 @@ type ConsensusIntegration struct {
 func NewConsensusIntegration(blockchain *Blockchain, dpos *consensus.DPoSConsensus) *ConsensusIntegration {
 	ci := &ConsensusIntegration{
 		blockchain:      blockchain,
-		dpos:           dpos,
+		dpos:            dpos,
 		enableConsensus: true,
 	}
 
@@ -49,8 +49,9 @@ func (ci *ConsensusIntegration) setupCallbacks() {
 // onValidatorSetChanged 验证者集合变化回调
 func (ci *ConsensusIntegration) onValidatorSetChanged(validators []*consensus.ValidatorInfo) {
 	fmt.Printf("Validator set changed: %d active validators\n", len(validators))
-	
-	// 可以在这里触发其他系统的更新
+
+	// 同步验证者到验证者存储
+	ci.syncValidatorsToStore(validators)
 }
 
 // onSlotChanged 槽位变化回调
@@ -88,7 +89,7 @@ func (ci *ConsensusIntegration) ValidateBlockWithConsensus(block *types.Block) e
 	// 验证出块者权限
 	blockTime := time.Unix(block.Header.Timestamp, 0)
 	if !ci.dpos.CanProduceBlock(block.Header.Validator, blockTime) {
-		return fmt.Errorf("validator %s cannot produce block at timestamp %v", 
+		return fmt.Errorf("validator %s cannot produce block at timestamp %v",
 			block.Header.Validator.String(), blockTime)
 	}
 
@@ -130,13 +131,26 @@ func (ci *ConsensusIntegration) ProduceBlock(producer types.Address, transaction
 		producer,
 	)
 
-	// 设置时间戳
-	block.Header.Timestamp = now.Unix()
+	// 设置时间戳，确保大于前一个区块
+	blockTimestamp := now.Unix()
+	if blockTimestamp <= latestBlock.Header.Timestamp {
+		// 如果当前时间不够新，使用前一个区块时间+1秒
+		blockTimestamp = latestBlock.Header.Timestamp + 1
+	}
+	block.Header.Timestamp = blockTimestamp
 
 	// 添加交易
 	for _, txHash := range transactions {
 		block.AddTransaction(txHash)
 	}
+
+	// 计算交易Merkle根
+	txRoot := block.CalculateTxRoot()
+	block.Header.TxRoot = txRoot
+
+	// 为区块添加简单的签名（单节点测试用）
+	// 这里使用一个简单的模拟签名
+	block.Header.Signature = []byte("demo_signature_" + producer.String())
 
 	// 验证区块
 	if err := ci.ValidateBlockWithConsensus(block); err != nil {
@@ -231,6 +245,41 @@ func (ci *ConsensusIntegration) GetValidatorStats(validator types.Address) (*con
 	return ci.dpos.GetProducerStats(validator)
 }
 
+// syncValidatorsToStore 同步验证者到验证者存储
+func (ci *ConsensusIntegration) syncValidatorsToStore(validators []*consensus.ValidatorInfo) {
+	// 获取验证者存储
+	validatorStore := ci.getValidatorStore()
+	if validatorStore == nil {
+		fmt.Printf("⚠️  Warning: ValidatorStore not available for synchronization\n")
+		return
+	}
+
+	// 同步所有活跃验证者到存储
+	for _, validatorInfo := range validators {
+		if validatorInfo.IsActive {
+			err := validatorStore.PutValidator(validatorInfo.Validator)
+			if err != nil {
+				fmt.Printf("⚠️  Failed to sync validator %s to store: %v\n",
+					validatorInfo.Validator.Address.String(), err)
+			} else {
+				fmt.Printf("✅ Synced validator %s to store (stake: %d)\n",
+					validatorInfo.Validator.Address.String(), validatorInfo.TotalStake)
+			}
+		}
+	}
+}
+
+// getValidatorStore 获取验证者存储
+func (ci *ConsensusIntegration) getValidatorStore() storage.ValidatorStoreInterface {
+	// 通过区块链管理器的验证器获取验证者存储
+	if ci.blockchain.validator == nil {
+		return nil
+	}
+
+	// 获取验证器内部的验证者存储
+	return ci.blockchain.validator.GetValidatorStore()
+}
+
 // RegisterValidator 注册验证者
 func (ci *ConsensusIntegration) RegisterValidator(address types.Address, stake uint64, commission float64) error {
 	if !ci.enableConsensus {
@@ -304,6 +353,11 @@ func (ci *ConsensusIntegration) ProcessUnbondingDelegations() []string {
 	return ci.dpos.ProcessUnbondingDelegations()
 }
 
+// GetDPoS 获取DPoS实例
+func (ci *ConsensusIntegration) GetDPoS() *consensus.DPoSConsensus {
+	return ci.dpos
+}
+
 // GetConsensusInfo 获取共识信息
 func (ci *ConsensusIntegration) GetConsensusInfo() *ConsensusInfo {
 	if !ci.enableConsensus {
@@ -313,27 +367,27 @@ func (ci *ConsensusIntegration) GetConsensusInfo() *ConsensusInfo {
 	}
 
 	return &ConsensusInfo{
-		Enabled:            true,
-		CurrentEpoch:       ci.dpos.GetCurrentEpoch(),
-		CurrentSlot:        ci.dpos.GetCurrentSlot(),
-		CurrentProducer:    ci.currentProducer,
-		NextSlotTime:       ci.dpos.GetNextSlotTime(),
-		ActiveValidators:   len(ci.dpos.GetActiveValidators()),
-		TotalValidators:    ci.dpos.GetValidatorCount(),
-		TotalStake:         ci.dpos.GetTotalStake(),
-		IsProducing:        ci.dpos.IsProducing(),
+		Enabled:          true,
+		CurrentEpoch:     ci.dpos.GetCurrentEpoch(),
+		CurrentSlot:      ci.dpos.GetCurrentSlot(),
+		CurrentProducer:  ci.currentProducer,
+		NextSlotTime:     ci.dpos.GetNextSlotTime(),
+		ActiveValidators: len(ci.dpos.GetActiveValidators()),
+		TotalValidators:  ci.dpos.GetValidatorCount(),
+		TotalStake:       ci.dpos.GetTotalStake(),
+		IsProducing:      ci.dpos.IsProducing(),
 	}
 }
 
 // ConsensusInfo 共识信息
 type ConsensusInfo struct {
-	Enabled            bool          `json:"enabled"`
-	CurrentEpoch       uint64        `json:"current_epoch"`
-	CurrentSlot        uint64        `json:"current_slot"`
-	CurrentProducer    types.Address `json:"current_producer"`
-	NextSlotTime       time.Time     `json:"next_slot_time"`
-	ActiveValidators   int           `json:"active_validators"`
-	TotalValidators    int           `json:"total_validators"`
-	TotalStake         uint64        `json:"total_stake"`
-	IsProducing        bool          `json:"is_producing"`
+	Enabled          bool          `json:"enabled"`
+	CurrentEpoch     uint64        `json:"current_epoch"`
+	CurrentSlot      uint64        `json:"current_slot"`
+	CurrentProducer  types.Address `json:"current_producer"`
+	NextSlotTime     time.Time     `json:"next_slot_time"`
+	ActiveValidators int           `json:"active_validators"`
+	TotalValidators  int           `json:"total_validators"`
+	TotalStake       uint64        `json:"total_stake"`
+	IsProducing      bool          `json:"is_producing"`
 }

@@ -121,6 +121,11 @@ func (n *Node) Start() error {
 		}
 	}()
 
+	// 启动区块生产循环（如果有共识）
+	if n.blockchain.GetConsensus() != nil && n.blockchain.GetConsensus().IsConsensusEnabled() {
+		go n.blockProductionLoop()
+	}
+
 	// 区块链管理器已在创建时自动初始化创世状态
 	// 无需额外的初始化步骤
 
@@ -170,11 +175,6 @@ func (n *Node) Stop() error {
 
 	fmt.Println("ShardMatrix node stopped")
 	return nil
-}
-
-// generateNodeID 生成节点ID
-func generateNodeID() string {
-	return fmt.Sprintf("node_%d", time.Now().UnixNano())
 }
 
 // 网络消息处理函数
@@ -378,4 +378,60 @@ func (n *Node) StartSync(peerID string, targetHeight uint64) error {
 // StopSync 停止同步
 func (n *Node) StopSync() {
 	n.blockchain.StopSync()
+}
+
+// blockProductionLoop 区块生产循环
+func (n *Node) blockProductionLoop() {
+	fmt.Printf("💰 Starting block production loop...\n")
+
+	for n.isRunning {
+		if !n.blockchain.GetConsensus().IsConsensusEnabled() {
+			time.Sleep(time.Second)
+			continue
+		}
+
+		// 获取当前时间的出块者
+		now := time.Now()
+		producer, slot, err := n.blockchain.GetConsensus().GetDPoS().GetCurrentProducerForTime(now)
+		if err != nil {
+			time.Sleep(time.Millisecond * 100)
+			continue
+		}
+
+		// 检查是否该轮到这个验证者出块
+		if n.blockchain.GetConsensus().IsMyTurnToProduce(producer) {
+			// 获取交易池中的交易
+			pendingTxs := n.txPool.GetPendingTransactions()
+			txHashes := make([]types.Hash, 0, len(pendingTxs))
+			for _, tx := range pendingTxs {
+				txHashes = append(txHashes, tx.Hash())
+			}
+
+			// 生产区块
+			block, err := n.blockchain.GetConsensus().ProduceBlock(producer, txHashes)
+			if err != nil {
+				fmt.Printf("⚠️  Failed to produce block: %v\n", err)
+				time.Sleep(time.Millisecond * 100)
+				continue
+			}
+
+			// 将区块添加到区块链
+			// if err := n.blockchain.AddBlock(block); err != nil {
+			// 	fmt.Printf("⚠️  Failed to add block to chain: %v\n", err)
+			// } else {
+			fmt.Printf("✅ Block produced successfully: %s (height: %d, slot: %d, txs: %d)\n",
+				block.Hash().String()[:16], block.Header.Number, slot, len(block.Transactions))
+
+			// 广播区块
+			if err := n.BroadcastBlock(block); err != nil {
+				fmt.Printf("⚠️  Failed to broadcast block: %v\n", err)
+			}
+			// }
+		}
+
+		// 等待一小段时间再检查
+		time.Sleep(time.Millisecond * 500)
+	}
+
+	fmt.Printf("🛑 Block production loop stopped\n")
 }
