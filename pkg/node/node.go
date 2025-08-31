@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -11,13 +12,12 @@ import (
 	"github.com/govm-net/shardmatrix/pkg/txpool"
 	"github.com/govm-net/shardmatrix/pkg/types"
 	"github.com/govm-net/shardmatrix/pkg/validator"
-	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // Node represents a blockchain node
 type Node struct {
 	config         *config.Config
-	network        *network.NetworkManager
+	network        *network.Network
 	blockchain     *blockchain.Blockchain
 	blockStore     storage.BlockStore
 	txStore        storage.TransactionStoreInterface
@@ -65,16 +65,14 @@ func New(cfg *config.Config) (*Node, error) {
 	}
 
 	// 创建网络管理器
-	networkConfig := &network.LibP2PConfig{
-		NodeID:         generateNodeID(),
-		ListenAddrs:    []string{"/ip4/0.0.0.0/tcp/0"},
+	networkConfig := &network.NetworkConfig{
+		Port:           cfg.Network.Port,
+		Host:           cfg.Network.Host,
+		MaxPeers:       50, // 默认值
 		BootstrapPeers: cfg.Network.BootstrapPeers,
-		ConnTimeout:    time.Second * 30,
-		ChainID:        cfg.Blockchain.ChainID,
-		Version:        "1.0.0",
-		MaxPeers:       50,
+		PrivateKeyPath: "", // 使用默认生成
 	}
-	networkManager, err := network.NewNetworkManager(networkConfig)
+	networkManager, err := network.New(networkConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network manager: %v", err)
 	}
@@ -101,12 +99,9 @@ func New(cfg *config.Config) (*Node, error) {
 	)
 
 	// 设置网络回调
-	networkManager.SetCallbacks(
-		node.onPeerConnected,
-		node.onPeerDisconnected,
-		node.onBlockReceived,
-		node.onTransactionReceived,
-	)
+	// 注册消息处理器
+	networkManager.RegisterMessageHandler("blocks", node.onBlockMessage)
+	networkManager.RegisterMessageHandler("transactions", node.onTransactionMessage)
 
 	return node, nil
 }
@@ -119,10 +114,12 @@ func (n *Node) Start() error {
 
 	fmt.Printf("Starting ShardMatrix node on libp2p network\n")
 
-	// 启动网络层
-	if err := n.network.Start(); err != nil {
-		return fmt.Errorf("failed to start network: %v", err)
-	}
+	// 启动网络层需要使用 Run 方法
+	go func() {
+		if err := n.network.Run(context.Background()); err != nil {
+			fmt.Printf("Network run error: %v\n", err)
+		}
+	}()
 
 	// 区块链管理器已在创建时自动初始化创世状态
 	// 无需额外的初始化步骤
@@ -131,8 +128,8 @@ func (n *Node) Start() error {
 	n.startTime = time.Now()
 
 	fmt.Printf("ShardMatrix node started successfully\n")
-	fmt.Printf("Node ID: %s\n", n.network.GetNodeID().String())
-	fmt.Printf("Listen Addresses: %v\n", n.network.GetListenAddress())
+	fmt.Printf("Node ID: %s\n", n.network.GetLocalPeerID())
+	fmt.Printf("Listen Addresses: %v\n", n.network.GetLocalAddresses())
 
 	// 显示区块链状态
 	chainState := n.blockchain.GetChainState()
@@ -150,9 +147,9 @@ func (n *Node) Stop() error {
 
 	fmt.Println("Stopping ShardMatrix node...")
 
-	// 停止网络层
-	if err := n.network.Stop(); err != nil {
-		fmt.Printf("Error stopping network: %v\n", err)
+	// 停止网络层通过关闭主机实现
+	if n.network.GetHost() != nil {
+		n.network.GetHost().Close()
 	}
 
 	// 关闭存储层
@@ -180,48 +177,26 @@ func generateNodeID() string {
 	return fmt.Sprintf("node_%d", time.Now().UnixNano())
 }
 
-// 网络回调函数
+// 网络消息处理函数
 
-// onPeerConnected 节点连接回调
-func (n *Node) onPeerConnected(peerID peer.ID) {
-	fmt.Printf("Peer connected: %s\n", peerID.String())
+// onBlockMessage 接收区块消息处理
+func (n *Node) onBlockMessage(peerID string, msg network.NetMessage) error {
+	fmt.Printf("Received block message from peer %s\n", peerID)
+
+	// TODO: 反序列化区块数据并处理
+	// 这里需要实现具体的区块反序列化和验证逻辑
+
+	return nil
 }
 
-// onPeerDisconnected 节点断开回调
-func (n *Node) onPeerDisconnected(peerID peer.ID) {
-	fmt.Printf("Peer disconnected: %s\n", peerID.String())
-}
+// onTransactionMessage 接收交易消息处理
+func (n *Node) onTransactionMessage(peerID string, msg network.NetMessage) error {
+	fmt.Printf("Received transaction message from peer %s\n", peerID)
 
-// onBlockReceived 接收区块回调
-func (n *Node) onBlockReceived(block *types.Block, fromPeer peer.ID) {
-	fmt.Printf("Received block %s from peer %s\n", block.Hash().String(), fromPeer.String())
+	// TODO: 反序列化交易数据并处理
+	// 这里需要实现具体的交易反序列化和验证逻辑
 
-	// 通过区块链管理器添加区块
-	if err := n.blockchain.AddBlock(block); err != nil {
-		fmt.Printf("Failed to add block to blockchain: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Block accepted and added to blockchain: %s\n", block.Hash().String())
-}
-
-// onTransactionReceived 接收交易回调
-func (n *Node) onTransactionReceived(tx *types.Transaction, fromPeer peer.ID) {
-	fmt.Printf("Received transaction %s from peer %s\n", tx.Hash().String(), fromPeer.String())
-
-	// 验证交易
-	if err := n.validator.ValidateTransaction(tx); err != nil {
-		fmt.Printf("Transaction validation failed: %v\n", err)
-		return
-	}
-
-	// 添加到交易池
-	if err := n.txPool.AddTransaction(tx); err != nil {
-		fmt.Printf("Failed to add transaction to pool: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Transaction accepted and added to pool: %s\n", tx.Hash().String())
+	return nil
 }
 
 // 区块链回调函数
@@ -272,7 +247,7 @@ func (n *Node) GetBlockchain() *blockchain.Blockchain {
 }
 
 // GetNetworkManager 获取网络管理器
-func (n *Node) GetNetworkManager() *network.NetworkManager {
+func (n *Node) GetNetworkManager() *network.Network {
 	return n.network
 }
 
@@ -310,13 +285,13 @@ func (n *Node) GetNodeInfo() map[string]interface{} {
 	chainHealth := n.blockchain.GetChainHealth()
 
 	return map[string]interface{}{
-		"node_id":      n.network.GetNodeID().String(),
+		"node_id":      n.network.GetLocalPeerID(),
 		"version":      "1.0.0",
 		"is_running":   n.isRunning,
 		"uptime":       n.GetUptime().String(),
-		"peer_count":   n.network.GetPeerCount(),
-		"active_peers": n.network.GetActivePeerCount(),
-		"listen_addr":  n.network.GetListenAddress(),
+		"peer_count":   len(n.network.GetPeers()),
+		"active_peers": len(n.network.GetPeers()),
+		"listen_addr":  n.network.GetLocalAddresses(),
 		"chain_height": chainState.Height,
 		"best_block":   chainState.BestBlockHash.String(),
 		"total_work":   chainState.TotalWork,
@@ -338,8 +313,12 @@ func (n *Node) BroadcastTransaction(tx *types.Transaction) error {
 		return fmt.Errorf("failed to add transaction to pool: %v", err)
 	}
 
+	// 序列化交易数据用于广播
+	// TODO: 实现具体的交易序列化
+	txData := []byte(tx.Hash().String())
+
 	// 广播给其他节点
-	return n.network.BroadcastTransaction(tx)
+	return n.network.BroadcastMessage("transactions", txData)
 }
 
 // BroadcastBlock 广播区块
@@ -349,8 +328,12 @@ func (n *Node) BroadcastBlock(block *types.Block) error {
 		return fmt.Errorf("failed to add block to blockchain: %v", err)
 	}
 
+	// 序列化区块数据用于广播
+	// TODO: 实现具体的区块序列化
+	blockData := []byte(block.Hash().String())
+
 	// 广播给其他节点
-	return n.network.BroadcastBlock(block)
+	return n.network.BroadcastMessage("blocks", blockData)
 }
 
 // CreateBlock 创建新区块
