@@ -32,11 +32,23 @@ example:
 	@echo "Running basic usage example..."
 	go run examples/basic_usage.go
 
+# 运行LevelDB存储示例
+.PHONY: example-leveldb
+example-leveldb:
+	@echo "Running LevelDB storage example..."
+	go run examples/leveldb_storage_example.go
+
 # 测试
 .PHONY: test
 test:
 	@echo "Running tests..."
 	go test -v ./pkg/...
+
+# 测试存储模块
+.PHONY: test-storage
+test-storage:
+	@echo "Running storage tests..."
+	go test -v ./pkg/storage/...
 
 # 测试覆盖率
 .PHONY: test-coverage
@@ -117,16 +129,18 @@ dev:
 .PHONY: help
 help:
 	@echo "ShardMatrix Makefile Commands:"
-	@echo "  build        - Build the project"
-	@echo "  run          - Run the node"
-	@echo "  example      - Run the basic usage example"
-	@echo "  test         - Run tests"
-	@echo "  test-coverage- Run tests with coverage report"
-	@echo "  fmt          - Format code"
-	@echo "  lint         - Run linter"
-	@echo "  clean        - Clean build files"
-	@echo "  deps         - Install dependencies"
-	@echo "  docs         - Generate documentation"
-	@echo "  release      - Create release version"
-	@echo "  dev          - Start development mode"
-	@echo "  help         - Show this help"
+	@echo "  build          - Build the project"
+	@echo "  run            - Run the node"
+	@echo "  example        - Run the basic usage example"
+	@echo "  example-leveldb- Run the LevelDB storage example"
+	@echo "  test           - Run tests"
+	@echo "  test-storage   - Run storage tests"
+	@echo "  test-coverage  - Run tests with coverage report"
+	@echo "  fmt            - Format code"
+	@echo "  lint           - Run linter"
+	@echo "  clean          - Clean build files"
+	@echo "  deps           - Install dependencies"
+	@echo "  docs           - Generate documentation"
+	@echo "  release        - Create release version"
+	@echo "  dev            - Start development mode"
+	@echo "  help           - Show this help"

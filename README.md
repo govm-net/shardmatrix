@@ -57,6 +57,15 @@ go mod download
 go run cmd/node/main.go
 ```
 
+### 运行示例
+```bash
+# 运行基本使用示例
+go run examples/basic_usage.go
+
+# 运行 LevelDB 存储示例
+make example-leveldb
+```
+
 ### 配置说明
 编辑 `config.yaml` 文件来配置节点参数：
 
@@ -84,24 +93,29 @@ consensus:
 - [x] 项目架构设计
 - [x] 基础数据结构定义（区块、交易）
 - [x] 配置管理系统
-- [x] 开发路线图
+- [x] 存储层实现（LevelDB 区块存储、交易存储、账户存储、验证者存储）
+- [x] 密码学模块
+- [x] 交易池管理
+- [x] 区块链管理器
+- [x] DPoS 共识机制
+- [x] P2P 网络通信
 
 ### 进行中
-- [ ] 存储层实现（LevelDB）
-- [ ] 密码学模块
-- [ ] 交易池管理
-
-### 计划中
-- [ ] PoS共识机制
-- [ ] P2P网络通信
-- [ ] API接口
+- [ ] API 接口
 - [ ] 钱包功能
 - [ ] 分片机制
 - [ ] 智能合约支持
 
+### 计划中
+- [ ] 性能优化
+- [ ] 监控和运维工具
+- [ ] 部署和打包
+
 ## 文档
 
 - [架构概览](docs/architecture/overview.md) - 系统架构设计
+- [存储层设计](docs/architecture/storage.md) - 存储系统架构
+- [LevelDB 区块存储实现](docs/storage/leveldb_block_store.md) - LevelDB 区块存储详细实现
 - [开发路线图](docs/development/roadmap.md) - 详细开发计划
 - [API文档](docs/api/) - API接口文档（待完善）
 

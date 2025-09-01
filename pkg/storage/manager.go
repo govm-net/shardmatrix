@@ -36,8 +36,11 @@ func NewStorageManager(config *StorageConfig) (*StorageManager, error) {
 	}
 
 	// 创建各种存储实例
-	blockStore := NewMemoryBlockStore() // 暂时使用内存存储
-	
+	blockStore, err := NewLevelDBBlockStore(config.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create block store: %v", err)
+	}
+
 	txStore, err := NewTransactionStore(filepath.Join(config.DataDir, "transactions"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create transaction store: %v", err)

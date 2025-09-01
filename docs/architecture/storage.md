@@ -32,13 +32,29 @@ type BlockStore interface {
     HasBlock(blockHash []byte) bool
     GetLatestBlock() (*Block, error)
 }
+```
 
-type StateStore interface {
-    GetAccount(address Address) (*Account, error)
-    UpdateAccount(address Address, account *Account) error
-    GetStateRoot() Hash
-    Commit() error
-    Rollback() error
+### 区块存储实现
+
+ShardMatrix 提供了两种区块存储实现：
+
+1. **内存存储**：用于测试和开发环境
+2. **LevelDB 存储**：用于生产环境，提供数据持久化
+
+#### LevelDB 区块存储
+
+LevelDB 区块存储实现了 BlockStore 接口，使用 LevelDB 作为底层存储引擎。详细实现请参考 [LevelDB 区块存储实现文档](../storage/leveldb_block_store.md)。
+
+主要特性：
+- 数据持久化存储
+- 按区块哈希和高度快速查询
+- 自动维护最新区块引用
+- 支持创世区块特殊处理
+
+```go
+// LevelDBBlockStore LevelDB区块存储实现
+type LevelDBBlockStore struct {
+    db *leveldb.DB
 }
 ```
 
