@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/govm-net/shardmatrix/pkg/api"
 	"github.com/govm-net/shardmatrix/pkg/blockchain"
 	"github.com/govm-net/shardmatrix/pkg/config"
 	"github.com/govm-net/shardmatrix/pkg/network"
@@ -25,6 +26,7 @@ type Node struct {
 	validatorStore storage.ValidatorStoreInterface
 	txPool         *txpool.MemoryTxPool
 	validator      *validator.Validator
+	apiServer      *api.APIServer
 
 	// 状态管理
 	isRunning bool
@@ -91,6 +93,10 @@ func New(cfg *config.Config) (*Node, error) {
 		isRunning:      false,
 	}
 
+	// 创建API服务器
+	apiServer := api.NewAPIServer(cfg, blockchainManager, networkManager)
+	node.apiServer = apiServer
+
 	// 设置区块链回调
 	blockchainManager.SetCallbacks(
 		node.onNewBlockFromBlockchain,
@@ -126,6 +132,15 @@ func (n *Node) Start() error {
 		go n.blockProductionLoop()
 	}
 
+	// 启动API服务器
+	if n.apiServer != nil {
+		if err := n.apiServer.Start(); err != nil {
+			fmt.Printf("Failed to start API server: %v\n", err)
+		} else {
+			fmt.Printf("API server started on %s:%d\n", n.config.API.Host, n.config.API.Port)
+		}
+	}
+
 	// 区块链管理器已在创建时自动初始化创世状态
 	// 无需额外的初始化步骤
 
@@ -151,6 +166,15 @@ func (n *Node) Stop() error {
 	}
 
 	fmt.Println("Stopping ShardMatrix node...")
+
+	// 停止API服务器
+	if n.apiServer != nil {
+		if err := n.apiServer.Stop(); err != nil {
+			fmt.Printf("Failed to stop API server: %v\n", err)
+		} else {
+			fmt.Println("API server stopped")
+		}
+	}
 
 	// 停止网络层通过关闭主机实现
 	if n.network.GetHost() != nil {
@@ -254,6 +278,11 @@ func (n *Node) GetNetworkManager() *network.Network {
 // GetBlockStore 获取区块存储
 func (n *Node) GetBlockStore() storage.BlockStore {
 	return n.blockStore
+}
+
+// GetAPIServer 获取API服务器
+func (n *Node) GetAPIServer() *api.APIServer {
+	return n.apiServer
 }
 
 // GetTxPool 获取交易池

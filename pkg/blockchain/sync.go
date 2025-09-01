@@ -216,15 +216,14 @@ func (bc *Blockchain) GetBlockRange(fromHeight, toHeight uint64) ([]*types.Block
 // GetRecentBlocks 获取最近的区块
 func (bc *Blockchain) GetRecentBlocks(count int) ([]*types.Block, error) {
 	bc.mutex.RLock()
-	defer bc.mutex.RUnlock()
+	currentHeight := bc.chainState.Height
+	bc.mutex.RUnlock()
 
 	if count <= 0 {
 		return []*types.Block{}, nil
 	}
 
-	currentHeight := bc.chainState.Height
 	fromHeight := uint64(0)
-
 	if currentHeight >= uint64(count-1) {
 		fromHeight = currentHeight - uint64(count-1)
 	}
