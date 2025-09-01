@@ -121,8 +121,8 @@ func (bv *BlockValidator) ValidateBlock(block *types.Block) error {
 		return fmt.Errorf("validator validation failed: %w", err)
 	}
 
-	// 8. 验证签名
-	if bv.config.RequireSignature {
+	// 8. 验证签名（创世区块不需要签名）
+	if bv.config.RequireSignature && block.Header.Number > 0 {
 		if err := bv.ValidateSignature(block); err != nil {
 			return fmt.Errorf("signature validation failed: %w", err)
 		}

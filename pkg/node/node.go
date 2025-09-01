@@ -2,7 +2,9 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/govm-net/shardmatrix/pkg/api"
@@ -31,6 +33,15 @@ type Node struct {
 	// 状态管理
 	isRunning bool
 	startTime time.Time
+}
+
+// BlockSyncRequest 区块同步请求
+type BlockSyncRequest struct {
+	FromHeight uint64     `json:"from_height"` // 起始高度
+	ToHeight   uint64     `json:"to_height"`   // 结束高度
+	MaxBlocks  int        `json:"max_blocks"`  // 最大区块数
+	Height     uint64     `json:"height,omitempty"`
+	Hash       types.Hash `json:"hash,omitempty"`
 }
 
 // New creates a new blockchain node
@@ -108,6 +119,9 @@ func New(cfg *config.Config) (*Node, error) {
 	// 注册消息处理器
 	networkManager.RegisterMessageHandler("blocks", node.onBlockMessage)
 	networkManager.RegisterMessageHandler("transactions", node.onTransactionMessage)
+
+	// 注册区块同步请求处理器
+	networkManager.RegisterRequestHandler("block_request", node.onBlockRequest)
 
 	return node, nil
 }
@@ -207,8 +221,126 @@ func (n *Node) Stop() error {
 func (n *Node) onBlockMessage(peerID string, msg network.NetMessage) error {
 	fmt.Printf("Received block message from peer %s\n", peerID)
 
-	// TODO: 反序列化区块数据并处理
-	// 这里需要实现具体的区块反序列化和验证逻辑
+	// 反序列化区块数据
+	var block types.Block
+	if err := json.Unmarshal(msg.Data, &block); err != nil {
+		fmt.Printf("Failed to deserialize block from peer %s: %v\n", peerID, err)
+		return err
+	}
+
+	fmt.Printf("Received block %s at height %d from peer %s\n",
+		block.Hash().String(), block.Header.Number, peerID)
+
+	// 验证区块
+	if err := n.validator.ValidateNewBlock(&block, nil); err != nil {
+		// 检查是否是前置区块缺失错误
+		if n.isPrevBlockNotFoundError(err) {
+			fmt.Printf("⛓️  Missing previous block for block %s (height: %d), initiating sync...\n",
+				block.Hash().String(), block.Header.Number)
+
+			// 主动请求缺失的前置区块
+			if err := n.requestMissingBlock(peerID, block.Header.PrevHash); err != nil {
+				fmt.Printf("❌ Failed to request missing block: %v\n", err)
+			} else {
+				fmt.Printf("🔄 Successfully requested missing block %s\n", block.Header.PrevHash.String())
+			}
+		} else {
+			fmt.Printf("Block validation failed: %v\n", err)
+		}
+		return err
+	}
+
+	// 检查是否应该接受这个区块
+	if n.shouldAcceptBlock(&block) {
+		// 尝试添加区块到链中
+		if err := n.blockchain.AddBlock(&block); err != nil {
+			fmt.Printf("Failed to add block to blockchain: %v\n", err)
+			return err
+		}
+
+		fmt.Printf("✅ Block %s added to blockchain (height: %d)\n",
+			block.Hash().String(), block.Header.Number)
+
+		// 从交易池中移除已确认的交易
+		for _, txHash := range block.Transactions {
+			n.txPool.RemoveTransaction(txHash)
+		}
+	} else {
+		fmt.Printf("⚠️  Block %s rejected (height: %d, current: %d)\n",
+			block.Hash().String(), block.Header.Number, n.blockchain.GetChainState().Height)
+	}
+
+	return nil
+}
+
+// shouldAcceptBlock 判断是否应该接受区块
+func (n *Node) shouldAcceptBlock(block *types.Block) bool {
+	chainState := n.blockchain.GetChainState()
+
+	// 只接受高度比当前链高的区块（最长链规则）
+	if block.Header.Number <= chainState.Height {
+		// 如果是相同高度但不同哈希，可能是分叉
+		if block.Header.Number == chainState.Height {
+			// 只有当区块哈希与当前最佳区块不同时才考虑作为分叉
+			return !block.Hash().Equal(chainState.BestBlockHash)
+		}
+		return false
+	}
+
+	// 接受高度更高的区块
+	return true
+}
+
+// isPrevBlockNotFoundError 检查是否为前置区块未找到错误
+func (n *Node) isPrevBlockNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// 检查错误消息中是否包含 PREV_BLOCK_NOT_FOUND
+	return strings.Contains(err.Error(), "PREV_BLOCK_NOT_FOUND") ||
+		strings.Contains(err.Error(), "previous block not found")
+}
+
+// requestMissingBlock 请求缺失的区块
+func (n *Node) requestMissingBlock(peerID string, blockHash types.Hash) error {
+	// 构造区块请求
+	blockReq := BlockSyncRequest{
+		Hash: blockHash,
+	}
+
+	reqData, err := json.Marshal(blockReq)
+	if err != nil {
+		return fmt.Errorf("failed to serialize block request: %v", err)
+	}
+
+	// 向对等节点发送请求
+	respData, err := n.network.SendRequest(peerID, "block_request", reqData)
+	if err != nil {
+		return fmt.Errorf("failed to send block request to peer %s: %v", peerID, err)
+	}
+
+	// 反序列化响应数据
+	var receivedBlock types.Block
+	if err := json.Unmarshal(respData, &receivedBlock); err != nil {
+		return fmt.Errorf("failed to deserialize received block: %v", err)
+	}
+
+	fmt.Printf("📥 Received missing block %s (height: %d) from peer %s\n",
+		receivedBlock.Hash().String(), receivedBlock.Header.Number, peerID)
+
+	// 验证并添加区块
+	if err := n.validator.ValidateNewBlock(&receivedBlock, nil); err != nil {
+		return fmt.Errorf("received block validation failed: %v", err)
+	}
+
+	// 尝试添加到区块链
+	if err := n.blockchain.AddBlock(&receivedBlock); err != nil {
+		return fmt.Errorf("failed to add received block to blockchain: %v", err)
+	}
+
+	fmt.Printf("✅ Successfully added missing block %s to blockchain\n",
+		receivedBlock.Hash().String())
 
 	return nil
 }
@@ -221,6 +353,88 @@ func (n *Node) onTransactionMessage(peerID string, msg network.NetMessage) error
 	// 这里需要实现具体的交易反序列化和验证逻辑
 
 	return nil
+}
+
+// onBlockRequest 处理区块请求
+func (n *Node) onBlockRequest(peerID string, req network.Request) ([]byte, error) {
+	fmt.Printf("📩 Received block request from peer %s\n", peerID)
+
+	// 解析请求参数
+	var blockReq BlockSyncRequest
+	if err := json.Unmarshal(req.Data, &blockReq); err != nil {
+		return nil, fmt.Errorf("failed to parse block request: %v", err)
+	}
+
+	fmt.Printf("🔍 Block request: height=%d, hash=%s\n", blockReq.Height, blockReq.Hash)
+
+	// 按高度查找区块
+	if blockReq.Height > 0 {
+		block, err := n.blockStore.GetBlockByHeight(blockReq.Height)
+		if err != nil {
+			return nil, fmt.Errorf("block at height %d not found: %v", blockReq.Height, err)
+		}
+
+		// 序列化区块返回
+		blockData, err := json.Marshal(block)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize block: %v", err)
+		}
+
+		fmt.Printf("✅ Sending block %s (height: %d) to peer %s\n",
+			block.Hash().String(), block.Header.Number, peerID)
+
+		return blockData, nil
+	}
+
+	// 按哈希查找区块
+	if !blockReq.Hash.IsZero() {
+		block, err := n.blockStore.GetBlock(blockReq.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("block with hash %s not found: %v", blockReq.Hash.String(), err)
+		}
+
+		// 序列化区块返回
+		blockData, err := json.Marshal(block)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize block: %v", err)
+		}
+
+		fmt.Printf("✅ Sending block %s (height: %d) to peer %s\n",
+			block.Hash().String(), block.Header.Number, peerID)
+
+		return blockData, nil
+	}
+
+	// 按范围查找区块
+	if blockReq.FromHeight > 0 {
+		toHeight := blockReq.ToHeight
+		if toHeight == 0 {
+			toHeight = blockReq.FromHeight
+		}
+
+		blocks, err := n.blockchain.GetBlocksForSync(blockReq.FromHeight, toHeight, blockReq.MaxBlocks)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get blocks for sync: %v", err)
+		}
+
+		// 如果没有找到区块，返回错误
+		if len(blocks) == 0 {
+			return nil, fmt.Errorf("no blocks found in range %d-%d", blockReq.FromHeight, toHeight)
+		}
+
+		// 序列化第一个区块返回（为了保持向后兼容）
+		blockData, err := json.Marshal(blocks[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize block: %v", err)
+		}
+
+		fmt.Printf("✅ Sending block %s (height: %d) to peer %s\n",
+			blocks[0].Hash().String(), blocks[0].Header.Number, peerID)
+
+		return blockData, nil
+	}
+
+	return nil, fmt.Errorf("invalid block request: no valid parameters specified")
 }
 
 // 区块链回调函数
@@ -358,8 +572,13 @@ func (n *Node) BroadcastBlock(block *types.Block) error {
 	}
 
 	// 序列化区块数据用于广播
-	// TODO: 实现具体的区块序列化
-	blockData := []byte(block.Hash().String())
+	blockData, err := json.Marshal(block)
+	if err != nil {
+		return fmt.Errorf("failed to serialize block: %v", err)
+	}
+
+	fmt.Printf("📶 Broadcasting block %s (height: %d, size: %d bytes)\n",
+		block.Hash().String(), block.Header.Number, len(blockData))
 
 	// 广播给其他节点
 	return n.network.BroadcastMessage("blocks", blockData)

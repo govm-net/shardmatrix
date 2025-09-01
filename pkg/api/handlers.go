@@ -669,13 +669,13 @@ func (api *APIServer) handleGetPeers(w http.ResponseWriter, r *http.Request) {
 	page := 1
 	limit := 10
 	status := r.URL.Query().Get("status") // connected, disconnected, all
-	
+
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
 			page = p
 		}
 	}
-	
+
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
 			limit = l
@@ -686,15 +686,15 @@ func (api *APIServer) handleGetPeers(w http.ResponseWriter, r *http.Request) {
 	// 现在返回模拟数据
 	peers := []map[string]interface{}{
 		{
-			"peer_id":     "12D3KooWExample1",
-			"address":     "/ip4/127.0.0.1/tcp/8080",
-			"status":      "connected",
+			"peer_id":      "12D3KooWExample1",
+			"address":      "/ip4/127.0.0.1/tcp/8080",
+			"status":       "connected",
 			"connected_at": time.Now().Add(-time.Hour),
-			"latency":     "50ms",
-			"version":     "1.0.0",
+			"latency":      "50ms",
+			"version":      "1.0.0",
 		},
 	}
-	
+
 	// 按状态筛选
 	if status != "" && status != "all" {
 		filteredPeers := make([]map[string]interface{}, 0)
@@ -705,21 +705,21 @@ func (api *APIServer) handleGetPeers(w http.ResponseWriter, r *http.Request) {
 		}
 		peers = filteredPeers
 	}
-	
+
 	response := map[string]interface{}{
 		"peers": peers,
 		"pagination": map[string]interface{}{
-			"page":    page,
-			"limit":   limit,
-			"total":   len(peers),
+			"page":     page,
+			"limit":    limit,
+			"total":    len(peers),
 			"has_more": false,
 		},
 		"filters": map[string]interface{}{
 			"status": status,
 		},
 		"summary": map[string]interface{}{
-			"total_peers":      len(peers),
-			"connected_peers":  1,
+			"total_peers":        len(peers),
+			"connected_peers":    1,
 			"disconnected_peers": 0,
 		},
 	}
@@ -733,7 +733,7 @@ func (api *APIServer) handleGetNetworkStats(w http.ResponseWriter, r *http.Reque
 	// 现在返回模拟数据
 	stats := map[string]interface{}{
 		"network_info": map[string]interface{}{
-			"node_id":        "12D3KooWDDsqVJ8ZekJaBhK8hZiU7steYxVFkeJxyJHBudY4ckNf",
+			"node_id": "12D3KooWDDsqVJ8ZekJaBhK8hZiU7steYxVFkeJxyJHBudY4ckNf",
 			"listen_addresses": []string{
 				"/ip4/127.0.0.1/tcp/8080",
 				"/ip4/192.168.3.25/tcp/8080",
@@ -742,12 +742,12 @@ func (api *APIServer) handleGetNetworkStats(w http.ResponseWriter, r *http.Reque
 			"network_id":       "shardmatrix",
 		},
 		"connection_stats": map[string]interface{}{
-			"total_peers":       1,
-			"connected_peers":   1,
-			"inbound_peers":     0,
-			"outbound_peers":    1,
-			"max_peers":         50,
-			"connection_rate":   "1.0/min",
+			"total_peers":        1,
+			"connected_peers":    1,
+			"inbound_peers":      0,
+			"outbound_peers":     1,
+			"max_peers":          50,
+			"connection_rate":    "1.0/min",
 			"disconnection_rate": "0.0/min",
 		},
 		"message_stats": map[string]interface{}{
@@ -759,18 +759,18 @@ func (api *APIServer) handleGetNetworkStats(w http.ResponseWriter, r *http.Reque
 			"bandwidth_usage":   "50KB/s",
 		},
 		"discovery_stats": map[string]interface{}{
-			"dht_peers":           10,
-			"mdns_discoveries":    5,
-			"bootstrap_peers":     3,
-			"discovery_rate":      "2.0/min",
+			"dht_peers":          10,
+			"mdns_discoveries":   5,
+			"bootstrap_peers":    3,
+			"discovery_rate":     "2.0/min",
 			"routing_table_size": 8,
 		},
 		"health_metrics": map[string]interface{}{
-			"uptime":             "2h30m45s",
-			"last_block_time":    time.Now().Add(-time.Second * 2),
-			"network_latency":    "25ms",
-			"sync_status":        "synced",
-			"error_rate":         "0.1%",
+			"uptime":          "2h30m45s",
+			"last_block_time": time.Now().Add(-time.Second * 2),
+			"network_latency": "25ms",
+			"sync_status":     "synced",
+			"error_rate":      "0.1%",
 		},
 		"timestamp": time.Now(),
 	}
@@ -789,9 +789,9 @@ func (api *APIServer) handleGetConsensusValidators(w http.ResponseWriter, r *htt
 	// TODO: 从共识模块获取当前活跃验证者
 	// 现在返回模拟数据
 	validators := map[string]interface{}{
-		"current_epoch": 28334458,
+		"current_epoch":    28334458,
 		"epoch_start_time": time.Now().Add(-time.Hour),
-		"epoch_duration": "1h",
+		"epoch_duration":   "1h",
 		"active_validators": []map[string]interface{}{
 			{
 				"address":         "0xd839ecfa599e5ed329c3905870c484695e17a509",
@@ -805,18 +805,18 @@ func (api *APIServer) handleGetConsensusValidators(w http.ResponseWriter, r *htt
 			},
 		},
 		"validator_stats": map[string]interface{}{
-			"total_validators":   1,
-			"active_validators":  1,
+			"total_validators":    1,
+			"active_validators":   1,
 			"inactive_validators": 0,
-			"jailed_validators":  0,
-			"total_stake":        10000,
-			"average_uptime":     "100%",
+			"jailed_validators":   0,
+			"total_stake":         10000,
+			"average_uptime":      "100%",
 		},
 		"next_epoch": map[string]interface{}{
-			"epoch_number":   28334459,
-			"start_time":     time.Now().Add(time.Hour),
-			"validator_set":  1,
-			"stake_changes":  0,
+			"epoch_number":  28334459,
+			"start_time":    time.Now().Add(time.Hour),
+			"validator_set": 1,
+			"stake_changes": 0,
 		},
 	}
 
@@ -921,7 +921,7 @@ func (api *APIServer) getConsensusInfo() ConsensusInfo {
 	}
 
 	// TODO: 获取活跃验证者数量
-	
+
 	return info
 }
 
@@ -954,9 +954,9 @@ func (api *APIServer) handleGetNetworkHealth(w http.ResponseWriter, r *http.Requ
 				"status":  "pass",
 				"message": "Node discovery is working properly",
 				"details": map[string]interface{}{
-					"dht_peers":           10,
-					"mdns_discoveries":    5,
-					"bootstrap_success":   true,
+					"dht_peers":          10,
+					"mdns_discoveries":   5,
+					"bootstrap_success":  true,
 					"routing_table_size": 8,
 				},
 			},
@@ -964,10 +964,10 @@ func (api *APIServer) handleGetNetworkHealth(w http.ResponseWriter, r *http.Requ
 				"status":  "pass",
 				"message": "Node is fully synchronized",
 				"details": map[string]interface{}{
-					"sync_status":      "synced",
-					"last_block_time":  time.Now().Add(-time.Second * 2),
-					"block_lag":        0,
-					"sync_progress":    "100%",
+					"sync_status":     "synced",
+					"last_block_time": time.Now().Add(-time.Second * 2),
+					"block_lag":       0,
+					"sync_progress":   "100%",
 				},
 			},
 		},

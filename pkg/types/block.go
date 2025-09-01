@@ -40,7 +40,15 @@ func NewBlock(number uint64, prevHash Hash, validator Address) *Block {
 
 // NewGenesisBlock 创建初始区块
 func NewGenesisBlock(validator Address) *Block {
-	return NewBlock(0, EmptyHash(), validator)
+	block := NewBlock(0, EmptyHash(), validator)
+
+	// 设置固定的创世区块时间戳
+	block.Header.Timestamp = 1700000000 // 固定时间戳，确保所有节点生成相同的创世区块
+
+	// 清空签名字段，创世区块不需要签名
+	block.Header.Signature = nil
+
+	return block
 }
 
 // Hash 计算区块哈希

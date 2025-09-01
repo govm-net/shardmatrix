@@ -27,6 +27,7 @@ type ProducerSchedule struct {
 }
 
 // GetProducerForSlot 获取指定槽位的出块者
+// 使用简化的选举算法：区块高度 % 验证者数量
 func (dpos *DPoSConsensus) GetProducerForSlot(slot uint64) (types.Address, error) {
 	dpos.mutex.RLock()
 	defer dpos.mutex.RUnlock()
@@ -35,20 +36,9 @@ func (dpos *DPoSConsensus) GetProducerForSlot(slot uint64) (types.Address, error
 		return types.Address{}, fmt.Errorf("no active validators")
 	}
 
-	// 计算当前轮次
-	slotsPerEpoch := uint64(dpos.config.EpochDuration / dpos.config.BlockInterval)
-	epoch := slot / slotsPerEpoch
-	slotInEpoch := slot % slotsPerEpoch
-
-	// 如果轮次发生变化，重新生成调度表
-	if epoch != dpos.currentEpoch {
-		if err := dpos.generateProducerScheduleUnsafe(epoch); err != nil {
-			return types.Address{}, fmt.Errorf("failed to generate schedule: %v", err)
-		}
-	}
-
-	// 从当前活跃验证者中选择
-	validatorIndex := slotInEpoch % uint64(len(dpos.activeValidators))
+	// 使用简化的选举算法：槽位直接模运算
+	// 这确保了所有节点在相同槽位会选择相同的验证者
+	validatorIndex := slot % uint64(len(dpos.activeValidators))
 	return dpos.activeValidators[validatorIndex].Validator.Address, nil
 }
 

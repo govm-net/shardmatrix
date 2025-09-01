@@ -108,12 +108,6 @@ func (ci *ConsensusIntegration) ProduceBlock(producer types.Address, transaction
 		return nil, fmt.Errorf("consensus not enabled")
 	}
 
-	// 检查是否为当前出块者
-	now := time.Now()
-	if !ci.dpos.CanProduceBlock(producer, now) {
-		return nil, fmt.Errorf("not current block producer")
-	}
-
 	// 获取链状态
 	ci.blockchain.mutex.RLock()
 	chainState := ci.blockchain.chainState
@@ -124,14 +118,29 @@ func (ci *ConsensusIntegration) ProduceBlock(producer types.Address, transaction
 		return nil, fmt.Errorf("failed to get latest block: %v", err)
 	}
 
+	// 计算下一个区块高度
+	nextHeight := chainState.Height + 1
+
+	// 检查是否为正确的出块者（基于区块高度）
+	expectedProducer, err := ci.GetProducerForHeight(nextHeight)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get producer for height %d: %v", nextHeight, err)
+	}
+
+	if !producer.Equal(expectedProducer) {
+		return nil, fmt.Errorf("not the designated block producer for height %d: expected %s, got %s",
+			nextHeight, expectedProducer.String(), producer.String())
+	}
+
 	// 创建新区块
 	block := types.NewBlock(
-		chainState.Height+1,
+		nextHeight,
 		latestBlock.Hash(),
 		producer,
 	)
 
 	// 设置时间戳，确保大于前一个区块
+	now := time.Now()
 	blockTimestamp := now.Unix()
 	if blockTimestamp <= latestBlock.Header.Timestamp {
 		// 如果当前时间不够新，使用前一个区块时间+1秒
@@ -213,18 +222,41 @@ func (ci *ConsensusIntegration) CheckMissedBlocks() error {
 	return nil
 }
 
+// GetProducerForHeight 获取指定高度的出块者
+// 使用简化的选举算法：区块高度 % 验证者数量
+func (ci *ConsensusIntegration) GetProducerForHeight(height uint64) (types.Address, error) {
+	if !ci.enableConsensus {
+		return types.Address{}, fmt.Errorf("consensus not enabled")
+	}
+
+	// 直接使用区块高度作为槽位编号
+	// 这确保所有节点在相同高度选择相同的验证者
+	return ci.dpos.GetProducerForSlot(height)
+}
+
 // GetCurrentProducer 获取当前出块者
 func (ci *ConsensusIntegration) GetCurrentProducer() types.Address {
 	return ci.currentProducer
 }
 
 // IsMyTurnToProduce 检查是否轮到指定验证者出块
+// 基于下一个区块高度进行判断
 func (ci *ConsensusIntegration) IsMyTurnToProduce(validator types.Address) bool {
 	if !ci.enableConsensus {
 		return false
 	}
 
-	return ci.dpos.CanProduceBlock(validator, time.Now())
+	// 获取下一个区块高度
+	nextHeight := ci.blockchain.GetChainState().Height + 1
+
+	// 获取该高度的预期出块者
+	expectedProducer, err := ci.GetProducerForHeight(nextHeight)
+	if err != nil {
+		return false
+	}
+
+	// 判断是否为当前验证者
+	return validator.Equal(expectedProducer)
 }
 
 // GetTimeToNextSlot 获取到下一个出块时间的间隔

@@ -33,8 +33,8 @@ type BlockchainConfig struct {
 
 // DefaultBlockchainConfig 默认区块链配置
 func DefaultBlockchainConfig() *BlockchainConfig {
-	// 创建默认的创世区块
-	genesisValidator := types.AddressFromPublicKey([]byte("genesis_validator"))
+	// 创建统一的创世区块配置
+	genesisValidator := types.AddressFromPublicKey([]byte("shardmatrix_genesis_validator"))
 	genesisBlock := types.NewGenesisBlock(genesisValidator)
 
 	return &BlockchainConfig{
