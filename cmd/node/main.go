@@ -86,21 +86,41 @@ func runNode(cmd *cobra.Command, args []string) error {
 				logrus.Infof("Demo validator registered: %s", validatorAddr.String())
 			}
 		} else {
-			// 注册配置文件中的验证者
-			for i, validatorStr := range cfg.Consensus.Validators {
-				addr, err := types.AddressFromString(validatorStr)
+			// 在多节点模式下，只注册当前节点负责的验证者
+			if cfg.Consensus.MyValidator != "" {
+				logrus.Info("Registering my validator for multi-node testing...")
+				addr, err := types.AddressFromString(cfg.Consensus.MyValidator)
 				if err != nil {
-					logrus.Warnf("Invalid validator address: %s", validatorStr)
-					continue
-				}
-
-				stake := uint64(5000 + i*1000)
-				commission := 0.1 + float64(i)*0.05
-
-				if err := dpos.RegisterValidator(addr, stake, commission); err != nil {
-					logrus.Warnf("Failed to register validator %s: %v", validatorStr, err)
+					logrus.Warnf("Invalid my_validator address: %s", cfg.Consensus.MyValidator)
 				} else {
-					logrus.Infof("Validator registered: %s (stake: %d)", validatorStr, stake)
+					stake := uint64(10000 + cfg.GetMyValidatorIndex()*1000) // 每个验证者不同的质押
+					commission := 0.1 + float64(cfg.GetMyValidatorIndex())*0.05
+
+					if err := dpos.RegisterValidator(addr, stake, commission); err != nil {
+						logrus.Warnf("Failed to register my validator %s: %v", cfg.Consensus.MyValidator, err)
+					} else {
+						validatorIndex := cfg.GetMyValidatorIndex()
+					logrus.Infof("My validator registered: %s (index: %d, stake: %d, commission: %.2f)", cfg.Consensus.MyValidator, validatorIndex, stake, commission)
+					}
+				}
+			} else {
+				// 回退到旧的行为：注册所有验证者（不推荐）
+				logrus.Warn("No my_validator specified, registering all validators (not recommended for multi-node)")
+				for i, validatorStr := range cfg.Consensus.Validators {
+					addr, err := types.AddressFromString(validatorStr)
+					if err != nil {
+						logrus.Warnf("Invalid validator address: %s", validatorStr)
+						continue
+					}
+
+					stake := uint64(5000 + i*1000)
+					commission := 0.1 + float64(i)*0.05
+
+					if err := dpos.RegisterValidator(addr, stake, commission); err != nil {
+						logrus.Warnf("Failed to register validator %s: %v", validatorStr, err)
+					} else {
+						logrus.Infof("Validator registered: %s (stake: %d)", validatorStr, stake)
+					}
 				}
 			}
 		}

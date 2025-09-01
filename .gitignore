@@ -28,3 +28,5 @@ node
 backup/
 bin/
 build/
+*.log
+logs/

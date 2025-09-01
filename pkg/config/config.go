@@ -28,6 +28,7 @@ type Config struct {
 		Type           string   `mapstructure:"type"`
 		ValidatorCount int      `mapstructure:"validator_count"`
 		Validators     []string `mapstructure:"validators"`
+		MyValidator    string   `mapstructure:"my_validator"`    // 当前节点负责的验证者
 	} `mapstructure:"consensus"`
 
 	// 存储配置
@@ -96,6 +97,7 @@ func setDefaults() {
 	viper.SetDefault("consensus.type", "pos")
 	viper.SetDefault("consensus.validator_count", 21)
 	viper.SetDefault("consensus.validators", []string{})
+	viper.SetDefault("consensus.my_validator", "")
 
 	// 存储默认配置
 	viper.SetDefault("storage.data_dir", "./data")
@@ -157,6 +159,7 @@ func (c *Config) Save(configFile string) error {
 	viper.Set("consensus.type", c.Consensus.Type)
 	viper.Set("consensus.validator_count", c.Consensus.ValidatorCount)
 	viper.Set("consensus.validators", c.Consensus.Validators)
+	viper.Set("consensus.my_validator", c.Consensus.MyValidator)
 
 	viper.Set("storage.data_dir", c.Storage.DataDir)
 	viper.Set("storage.db_type", c.Storage.DBType)
@@ -168,4 +171,19 @@ func (c *Config) Save(configFile string) error {
 	viper.Set("log.file", c.Log.File)
 
 	return viper.WriteConfigAs(configFile)
+}
+
+// GetMyValidatorIndex 获取当前验证者在验证者列表中的索引
+func (c *Config) GetMyValidatorIndex() int {
+	if c.Consensus.MyValidator == "" {
+		return -1
+	}
+	
+	for i, validator := range c.Consensus.Validators {
+		if validator == c.Consensus.MyValidator {
+			return i
+		}
+	}
+	
+	return -1 // 未找到
 }

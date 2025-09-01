@@ -1,0 +1,45 @@
+# ShardMatrix 多节点测试 - 节点3配置
+
+# 网络配置
+network:
+  port: 9003
+  host: "0.0.0.0"
+  bootstrap_peers: []  # 将在运行时动态配置
+
+# 区块链配置
+blockchain:
+  chain_id: 1
+  block_interval: 2  # 区块生成间隔（秒）
+  max_block_size: 10485760  # 最大区块大小（10MB）
+
+# 共识配置
+consensus:
+  type: "dpos"  # 共识类型：dpos
+  validator_count: 3  # 总验证者数量
+  validators: [
+    "0xeaecc6750ca9a0030dc7191093f93103b44e23ce",
+    "0x291321edddaa4e75f7f5108e9f68c3dd5934859c",
+    "0x4572bd2980ce0fd1c6fa28bf5e98c1ff9b04b679"
+  ]
+  my_validator: "0x4572bd2980ce0fd1c6fa28bf5e98c1ff9b04b679"  # 当前节点验证者
+
+# 存储配置
+storage:
+  data_dir: "./tests/multinode/data/node3"  # 数据目录
+  db_type: "leveldb"  # 数据库类型
+
+# API配置
+api:
+  port: 8093  # API端口
+  host: "127.0.0.1"  # API主机
+
+# 日志配置
+log:
+  level: "debug"  # 日志级别：debug, info, warn, error
+  file: "./tests/multinode/logs/node3.log"  # 日志文件路径
+
+# 多节点测试专用配置
+test:
+  node_id: "node3"
+  is_bootstrap: false
+  validator_index: 2  # 第三个验证者
