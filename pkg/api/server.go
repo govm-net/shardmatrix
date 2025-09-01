@@ -103,6 +103,7 @@ func (api *APIServer) setupRoutes() {
 	network.HandleFunc("/info", api.handleGetNetworkInfo).Methods("GET")
 	network.HandleFunc("/peers", api.handleGetPeers).Methods("GET")
 	network.HandleFunc("/stats", api.handleGetNetworkStats).Methods("GET")
+	network.HandleFunc("/health", api.handleGetNetworkHealth).Methods("GET")
 
 	// 共识相关API
 	consensus := v1.PathPrefix("/consensus").Subrouter()
