@@ -28,7 +28,7 @@ type Config struct {
 		Type           string   `mapstructure:"type"`
 		ValidatorCount int      `mapstructure:"validator_count"`
 		Validators     []string `mapstructure:"validators"`
-		MyValidator    string   `mapstructure:"my_validator"`    // 当前节点负责的验证者
+		MyValidator    string   `mapstructure:"my_validator"` // 当前节点负责的验证者
 	} `mapstructure:"consensus"`
 
 	// 存储配置
@@ -178,12 +178,12 @@ func (c *Config) GetMyValidatorIndex() int {
 	if c.Consensus.MyValidator == "" {
 		return -1
 	}
-	
+
 	for i, validator := range c.Consensus.Validators {
 		if validator == c.Consensus.MyValidator {
 			return i
 		}
 	}
-	
+
 	return -1 // 未找到
 }

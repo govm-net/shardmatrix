@@ -100,7 +100,7 @@ func runNode(cmd *cobra.Command, args []string) error {
 						logrus.Warnf("Failed to register my validator %s: %v", cfg.Consensus.MyValidator, err)
 					} else {
 						validatorIndex := cfg.GetMyValidatorIndex()
-					logrus.Infof("My validator registered: %s (index: %d, stake: %d, commission: %.2f)", cfg.Consensus.MyValidator, validatorIndex, stake, commission)
+						logrus.Infof("My validator registered: %s (index: %d, stake: %d, commission: %.2f)", cfg.Consensus.MyValidator, validatorIndex, stake, commission)
 					}
 				}
 			} else {
