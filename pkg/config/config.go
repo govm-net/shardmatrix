@@ -7,13 +7,22 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config 配置结构
 type Config struct {
 	// 网络配置
 	Network struct {
 		Port           int      `mapstructure:"port"`
 		Host           string   `mapstructure:"host"`
 		BootstrapPeers []string `mapstructure:"bootstrap_peers"`
+
+		// NAT配置
+		NAT struct {
+			EnableUPnP bool `mapstructure:"enable_upnp"`
+		} `mapstructure:"nat"`
+
+		// 防护配置
+		Protection struct {
+			MaxConnections int `mapstructure:"max_connections"`
+		} `mapstructure:"protection"`
 	} `mapstructure:"network"`
 
 	// 区块链配置
@@ -88,10 +97,16 @@ func setDefaults() {
 	viper.SetDefault("network.host", "0.0.0.0")
 	viper.SetDefault("network.bootstrap_peers", []string{})
 
+	// NAT默认配置
+	viper.SetDefault("network.nat.enable_upnp", true)
+
+	// 防护默认配置
+	viper.SetDefault("network.protection.max_connections", 50)
+
 	// 区块链默认配置
 	viper.SetDefault("blockchain.chain_id", 1)
-	viper.SetDefault("blockchain.block_interval", 2)            // 2秒
-	viper.SetDefault("blockchain.max_block_size", 10*1024*1024) // 10MB
+	viper.SetDefault("blockchain.block_interval", 3)           // 3秒
+	viper.SetDefault("blockchain.max_block_size", 2*1024*1024) // 2MB
 
 	// 共识默认配置
 	viper.SetDefault("consensus.type", "pos")

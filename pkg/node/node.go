@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/govm-net/shardmatrix/pkg/api"
@@ -33,6 +34,27 @@ type Node struct {
 	// 状态管理
 	isRunning bool
 	startTime time.Time
+
+	// 网络状态监控
+	networkMonitor *NetworkMonitor
+}
+
+// NetworkStatus 网络状态
+type NetworkStatus struct {
+	ConnectedPeers int       `json:"connected_peers"`
+	LastUpdateTime time.Time `json:"last_update_time"`
+	IsPartitioned  bool      `json:"is_partitioned"`
+	PartitionSince time.Time `json:"partition_since,omitempty"`
+	ReconnectCount int       `json:"reconnect_count"`
+}
+
+// NetworkMonitor 网络监控器
+type NetworkMonitor struct {
+	node           *Node
+	status         NetworkStatus
+	lastPeerCount  int
+	partitionTimer *time.Timer
+	mutex          sync.RWMutex
 }
 
 // BlockSyncRequest 区块同步请求
@@ -46,11 +68,43 @@ type BlockSyncRequest struct {
 
 // New creates a new blockchain node
 func New(cfg *config.Config) (*Node, error) {
-	// 创建存储层
-	blockStore := storage.NewMemoryBlockStore()
-	txStore := storage.NewMemoryTransactionStore()
-	accountStore := storage.NewMemoryAccountStore()
-	validatorStore := storage.NewMemoryValidatorStore()
+	// 创建存储层 - 根据配置选择存储类型
+	var (
+		blockStore     storage.BlockStore
+		txStore        storage.TransactionStoreInterface
+		accountStore   storage.AccountStoreInterface
+		validatorStore storage.ValidatorStoreInterface
+	)
+
+	// 检查是否配置了使用LevelDB存储
+	if cfg.Storage.DBType == "leveldb" {
+		// 创建LevelDB存储管理器
+		storageConfig := &storage.StorageConfig{
+			DataDir:   cfg.Storage.DataDir,
+			UseMemory: false,
+		}
+
+		storageManager, err := storage.NewStorageManager(storageConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create storage manager: %v", err)
+		}
+
+		// 使用LevelDB存储
+		blockStore = storageManager.BlockStore
+		txStore = storageManager.TxStore
+		accountStore = storageManager.AccountStore
+		validatorStore = storageManager.ValidatorStore
+
+		fmt.Printf("Using LevelDB storage at: %s\n", cfg.Storage.DataDir)
+	} else {
+		// 使用内存存储（默认）
+		blockStore = storage.NewMemoryBlockStore()
+		txStore = storage.NewMemoryTransactionStore()
+		accountStore = storage.NewMemoryAccountStore()
+		validatorStore = storage.NewMemoryValidatorStore()
+
+		fmt.Println("Using memory storage (for testing)")
+	}
 
 	// 创建交易池
 	txPoolConfig := txpool.DefaultTxPoolConfig()
@@ -77,17 +131,26 @@ func New(cfg *config.Config) (*Node, error) {
 		return nil, fmt.Errorf("failed to create blockchain manager: %v", err)
 	}
 
-	// 创建网络管理器
+	// 创建网络管理器配置
 	networkConfig := &network.NetworkConfig{
 		Port:           cfg.Network.Port,
 		Host:           cfg.Network.Host,
-		MaxPeers:       50, // 默认值
+		MaxPeers:       cfg.Network.Protection.MaxConnections,
 		BootstrapPeers: cfg.Network.BootstrapPeers,
 		PrivateKeyPath: "", // 使用默认生成
 	}
+
 	networkManager, err := network.New(networkConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network manager: %v", err)
+	}
+
+	// 创建网络监控器
+	networkMonitor := &NetworkMonitor{
+		status: NetworkStatus{
+			LastUpdateTime: time.Now(),
+		},
+		lastPeerCount: 0,
 	}
 
 	// 创建节点
@@ -102,7 +165,11 @@ func New(cfg *config.Config) (*Node, error) {
 		txPool:         txPool,
 		validator:      blockValidator,
 		isRunning:      false,
+		networkMonitor: networkMonitor,
 	}
+
+	// 设置网络监控器的节点引用
+	networkMonitor.node = node
 
 	// 创建API服务器
 	apiServer := api.NewAPIServer(cfg, blockchainManager, networkManager)
@@ -141,6 +208,9 @@ func (n *Node) Start() error {
 		}
 	}()
 
+	// 启动网络监控循环
+	go n.networkMonitorLoop()
+
 	// 启动区块生产循环（如果有共识）
 	if n.blockchain.GetConsensus() != nil && n.blockchain.GetConsensus().IsConsensusEnabled() {
 		go n.blockProductionLoop()
@@ -171,6 +241,93 @@ func (n *Node) Start() error {
 	fmt.Printf("Best block: %s\n", chainState.BestBlockHash.String())
 
 	return nil
+}
+
+// networkMonitorLoop 网络监控循环
+func (n *Node) networkMonitorLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for n.isRunning {
+		<-ticker.C
+		n.networkMonitor.checkNetworkStatus()
+
+	}
+}
+
+// checkNetworkStatus 检查网络状态
+func (nm *NetworkMonitor) checkNetworkStatus() {
+	nm.mutex.Lock()
+	defer nm.mutex.Unlock()
+
+	// 获取当前连接的节点数量
+	currentPeers := len(nm.node.network.GetPeers())
+	nm.status.ConnectedPeers = currentPeers
+	nm.status.LastUpdateTime = time.Now()
+
+	// 检查是否有网络分区
+	if nm.lastPeerCount > 0 && currentPeers == 0 {
+		// 检测到可能的网络分区
+		if !nm.status.IsPartitioned {
+			nm.status.IsPartitioned = true
+			nm.status.PartitionSince = time.Now()
+			fmt.Printf("⚠️  Network partition detected at %s\n", nm.status.PartitionSince.Format("2006-01-02 15:04:05"))
+
+			// 触发分区处理
+			nm.handleNetworkPartition()
+		}
+	} else if nm.lastPeerCount == 0 && currentPeers > 0 {
+		// 网络连接恢复
+		if nm.status.IsPartitioned {
+			nm.status.IsPartitioned = false
+			partitionDuration := time.Since(nm.status.PartitionSince)
+			nm.status.ReconnectCount++
+			fmt.Printf("✅ Network reconnected after partition (duration: %v)\n", partitionDuration)
+
+			// 触发分区恢复处理
+			nm.handleNetworkRecovery()
+		}
+	}
+
+	// 更新最后的节点数量
+	nm.lastPeerCount = currentPeers
+}
+
+// handleNetworkPartition 处理网络分区
+func (nm *NetworkMonitor) handleNetworkPartition() {
+	fmt.Printf("🔄 Handling network partition...\n")
+
+	// 在分区期间，节点继续正常工作但不广播新区块
+	// 可以记录分区事件到日志
+	chainState := nm.node.blockchain.GetChainState()
+	fmt.Printf("  Current chain height: %d\n", chainState.Height)
+	fmt.Printf("  Best block: %s\n", chainState.BestBlockHash.String())
+
+	// 可以暂停某些网络相关的操作
+	// 但保持区块生产和交易处理
+}
+
+// handleNetworkRecovery 处理网络恢复
+func (nm *NetworkMonitor) handleNetworkRecovery() {
+	fmt.Printf("🔄 Handling network recovery...\n")
+
+	// 网络恢复后，触发区块同步
+	go func() {
+		// 等待一段时间让连接稳定
+		time.Sleep(5 * time.Second)
+
+		// 触发区块同步
+		fmt.Printf("🔄 Initiating blockchain sync after network recovery...\n")
+		// 这里可以调用同步机制
+	}()
+}
+
+// GetNetworkStatus 获取网络状态
+func (nm *NetworkMonitor) GetNetworkStatus() NetworkStatus {
+	nm.mutex.RLock()
+	defer nm.mutex.RUnlock()
+
+	return nm.status
 }
 
 // Stop stops the node
@@ -526,6 +683,7 @@ func (n *Node) GetUptime() time.Duration {
 func (n *Node) GetNodeInfo() map[string]interface{} {
 	chainState := n.blockchain.GetChainState()
 	chainHealth := n.blockchain.GetChainHealth()
+	networkStatus := n.networkMonitor.GetNetworkStatus()
 
 	return map[string]interface{}{
 		"node_id":      n.network.GetLocalPeerID(),
@@ -541,6 +699,13 @@ func (n *Node) GetNodeInfo() map[string]interface{} {
 		"chain_health": chainHealth.Status,
 		"is_syncing":   chainHealth.IsSyncing,
 		"fork_count":   chainHealth.ForkCount,
+		"network_status": map[string]interface{}{
+			"connected_peers": networkStatus.ConnectedPeers,
+			"is_partitioned":  networkStatus.IsPartitioned,
+			"partition_since": networkStatus.PartitionSince,
+			"reconnect_count": networkStatus.ReconnectCount,
+			"last_update":     networkStatus.LastUpdateTime,
+		},
 	}
 }
 

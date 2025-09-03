@@ -1,0 +1,55 @@
+# ShardMatrix 配置文件示例（启用TLS）
+
+# 网络配置
+network:
+  port: 8080
+  host: "0.0.0.0"
+  bootstrap_peers: []
+  
+  # 安全配置
+  security:
+    enable_tls: true
+    enable_noise: true
+    whitelist_enabled: false
+    whitelist_nodes: []
+  
+  # NAT配置
+  nat:
+    enable_upnp: true
+    enable_stun: true
+    stun_servers: 
+      - "stun.l.google.com:19302"
+      - "stun1.l.google.com:19302"
+  
+  # 防护配置
+  protection:
+    rate_limit: 10
+    max_connections: 50
+
+# 区块链配置
+blockchain:
+  chain_id: 1
+  block_interval: 3  # 区块生成间隔（秒）
+  max_block_size: 2097152  # 最大区块大小（2MB）
+
+# 共识配置
+consensus:
+  type: "dpos"  # 共识类型：dpos
+  validator_count: 21  # 验证者数量
+  validators: []  # 验证者地址列表
+  my_validator: ""  # 当前节点验证者
+
+# 存储配置
+storage:
+  data_dir: "./data"  # 数据目录
+  db_type: "leveldb"  # 数据库类型
+
+# API配置
+api:
+  port: 8081  # API端口
+  host: "127.0.0.1"  # API主机
+
+# 日志配置
+log:
+  level: "info"  # 日志级别：debug, info, warn, error
+  file: ""  # 日志文件路径

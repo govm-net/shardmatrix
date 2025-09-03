@@ -40,8 +40,8 @@ func DefaultBlockchainConfig() *BlockchainConfig {
 	return &BlockchainConfig{
 		GenesisBlock:  genesisBlock,
 		ChainID:       1,
-		BlockInterval: 2 * time.Second,
-		MaxBlockSize:  10 * 1024 * 1024, // 10MB
+		BlockInterval: 3 * time.Second,
+		MaxBlockSize:  2 * 1024 * 1024, // 2MB
 		MaxReorgDepth: 100,              // 最多重组100个区块
 		ConfirmBlocks: 6,                // 6个确认
 	}

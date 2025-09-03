@@ -8,7 +8,7 @@
 
 LevelDB 区块存储实现遵循以下设计原则：
 
-1. **接口一致性**：实现与内存存储相同的 [BlockStore](file:///Volumes/ssd/myproject/shardmatrix/pkg/storage/block_store.go#L9-L27) 接口，确保上层应用无需修改即可切换存储后端
+1. **接口一致性**：实现与内存存储相同的 [BlockStore](../../pkg/storage/block_store.go#L9-L27) 接口，确保上层应用无需修改即可切换存储后端
 2. **数据持久化**：使用 LevelDB 作为底层存储引擎，保证数据的持久化存储
 3. **高效查询**：支持按区块哈希和高度进行快速查询
 4. **最新区块跟踪**：维护最新区块的引用，支持快速获取最新区块
@@ -131,7 +131,7 @@ db, err := leveldb.OpenFile("./data/blocks", options)
 
 LevelDB 区块存储与以下组件集成：
 
-1. **存储管理器**：通过 [StorageManager](file:///Volumes/ssd/myproject/shardmatrix/pkg/storage/manager.go#L13-L20) 统一管理所有存储组件
+1. **存储管理器**：通过 [StorageManager](../../pkg/storage/manager.go#L13-L20) 统一管理所有存储组件
 2. **区块链管理器**：作为区块链数据的持久化存储后端
 3. **节点**：在节点启动时自动初始化并使用
 

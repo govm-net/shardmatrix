@@ -71,7 +71,7 @@ dependencies:
    - 交易存储
    - 状态管理
 
-5. **交易池** (pkg/mempool)
+5. **交易池** (pkg/txpool)
    - 交易验证
    - 交易排序
    - 内存管理

@@ -1,0 +1,1676 @@
+openapi: 3.0.3
+info:
+  title: ShardMatrix API
+  description: |
+    ShardMatrix 提供了一套完整的 RESTful API 接口，允许开发者与区块链节点进行交互，
+    包括查询区块链状态、提交交易、获取区块和交易信息等操作。
+  version: 1.0.0
+  contact:
+    name: ShardMatrix Development Team
+    url: https://github.com/govm-net/shardmatrix
+
+servers:
+  - url: http://localhost:8081/api/v1
+    description: 本地开发服务器
+
+paths:
+  /health:
+    get:
+      summary: 健康检查
+      description: 检查API服务器的健康状态
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /status:
+    get:
+      summary: 获取节点状态
+      description: 获取节点的完整状态信息，包括区块链、网络和共识状态
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /blocks/latest:
+    get:
+      summary: 获取最新区块
+      description: 获取最新的区块信息
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockResponse'
+        '404':
+          description: 区块未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 区块链服务不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /blocks/height/{height}:
+    get:
+      summary: 根据高度获取区块
+      description: 根据区块高度获取区块信息
+      parameters:
+        - name: height
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 区块未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 区块链服务不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /blocks/{hash}:
+    get:
+      summary: 根据哈希获取区块
+      description: 根据区块哈希获取区块信息
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{64}$'
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 区块未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 区块链服务不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /blocks:
+    get:
+      summary: 获取区块列表
+      description: 获取区块列表
+      parameters:
+        - name: page
+          in: query
+          description: 页码
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页数量
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: from
+          in: query
+          description: 起始高度
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: to
+          in: query
+          description: 结束高度
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlocksListResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: 区块链服务不可用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /transactions:
+    get:
+      summary: 获取交易列表
+      description: 获取交易列表
+      parameters:
+        - name: page
+          in: query
+          description: 页码
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页数量
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: address
+          in: query
+          description: 地址筛选
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+        - name: status
+          in: query
+          description: 状态筛选
+          schema:
+            type: string
+            enum: [pending, confirmed, failed]
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionsListResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 提交新交易
+      description: 提交新的交易
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionSubmitResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /transactions/{hash}:
+    get:
+      summary: 根据哈希获取交易
+      description: 根据交易哈希获取交易信息
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{64}$'
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 交易未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /accounts/{address}:
+    get:
+      summary: 获取账户信息
+      description: 获取账户信息
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 账户未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /accounts/{address}/balance:
+    get:
+      summary: 获取账户余额
+      description: 获取账户余额
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountBalanceResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 账户未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /accounts/{address}/transactions:
+    get:
+      summary: 获取账户交易历史
+      description: 获取账户的交易历史
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+        - name: page
+          in: query
+          description: 页码
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页数量
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountTransactionsResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 账户未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /validators:
+    get:
+      summary: 获取验证者列表
+      description: 获取验证者列表
+      parameters:
+        - name: page
+          in: query
+          description: 页码
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页数量
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: status
+          in: query
+          description: 状态筛选 (active, inactive, all)
+          schema:
+            type: string
+            default: active
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidatorsListResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /validators/{address}:
+    get:
+      summary: 根据地址获取验证者信息
+      description: 根据地址获取验证者信息
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidatorResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 验证者未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /validators/{address}/delegators:
+    get:
+      summary: 获取验证者的委托人列表
+      description: 获取验证者的委托人列表
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^0x[a-fA-F0-9]{40}$'
+        - name: page
+          in: query
+          description: 页码
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页数量
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidatorDelegatorsResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 验证者未找到
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /network/info:
+    get:
+      summary: 获取网络信息
+      description: 获取网络信息
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkInfoResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /network/peers:
+    get:
+      summary: 获取连接的节点列表
+      description: 获取连接的节点列表
+      parameters:
+        - name: page
+          in: query
+          description: 页码
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: 每页数量
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: status
+          in: query
+          description: 状态筛选 (connected, disconnected, all)
+          schema:
+            type: string
+            default: connected
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeersListResponse'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /network/stats:
+    get:
+      summary: 获取网络统计信息
+      description: 获取网络统计信息
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkStatsResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /network/health:
+    get:
+      summary: 获取网络健康状态
+      description: 获取网络健康状态
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkHealthResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /consensus/info:
+    get:
+      summary: 获取共识机制信息
+      description: 获取共识机制信息
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsensusInfoResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /consensus/validators:
+    get:
+      summary: 获取共识相关的验证者信息
+      description: 获取共识相关的验证者信息
+      responses:
+        '200':
+          description: 成功响应
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsensusValidatorsResponse'
+        '500':
+          description: 服务器内部错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    # 基础响应结构
+    APIResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          type: string
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "错误描述"
+        data:
+          type: object
+          properties:
+            code:
+              type: integer
+              example: 400
+            message:
+              type: string
+              example: "详细错误信息"
+            details:
+              type: string
+              example: "错误详情"
+
+    # 健康检查相关
+    HealthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              example: "ok"
+            timestamp:
+              type: string
+              format: date-time
+              example: "2023-01-01T12:00:00Z"
+            version:
+              type: string
+              example: "1.0.0"
+            uptime:
+              type: string
+              example: "0s"
+
+    # 状态相关
+    StatusResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            node_info:
+              $ref: '#/components/schemas/NodeInfo'
+            blockchain_info:
+              $ref: '#/components/schemas/BlockchainInfo'
+            network_info:
+              $ref: '#/components/schemas/NetworkInfo'
+            consensus_info:
+              $ref: '#/components/schemas/ConsensusInfo'
+
+    NodeInfo:
+      type: object
+      properties:
+        version:
+          type: string
+          example: "1.0.0"
+        node_id:
+          type: string
+          example: "node-1"
+        start_time:
+          type: string
+          format: date-time
+          example: "2023-01-01T12:00:00Z"
+        uptime:
+          type: string
+          example: "0s"
+
+    BlockchainInfo:
+      type: object
+      properties:
+        chain_id:
+          type: integer
+          format: int64
+          example: 1
+        latest_height:
+          type: integer
+          format: int64
+          example: 0
+        latest_hash:
+          type: string
+          example: "0x..."
+        latest_time:
+          type: string
+          format: date-time
+          example: "2023-01-01T12:00:00Z"
+        total_blocks:
+          type: integer
+          format: int64
+          example: 1
+        total_txs:
+          type: integer
+          format: int64
+          example: 0
+
+    NetworkInfo:
+      type: object
+      properties:
+        peer_count:
+          type: integer
+          example: 0
+        inbound_peers:
+          type: integer
+          example: 0
+        outbound_peers:
+          type: integer
+          example: 0
+        listen_addr:
+          type: array
+          items:
+            type: string
+          example: []
+
+    ConsensusInfo:
+      type: object
+      properties:
+        type:
+          type: string
+          example: "dpos"
+        validator_count:
+          type: integer
+          example: 21
+        active_validators:
+          type: integer
+          example: 1
+        block_interval:
+          type: string
+          example: "3s"
+
+    # 区块相关
+    BlockResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/BlockData'
+
+    BlockData:
+      type: object
+      properties:
+        hash:
+          type: string
+          example: "0x..."
+        height:
+          type: integer
+          format: int64
+          example: 0
+        prev_hash:
+          type: string
+          example: "0x0000000000000000000000000000000000000000000000000000000000000000"
+        merkle_root:
+          type: string
+          example: "0x..."
+        timestamp:
+          type: string
+          format: date-time
+          example: "2023-01-01T12:00:00Z"
+        validator:
+          type: string
+          example: "0x..."
+        signature:
+          type: string
+          example: "0x..."
+        tx_count:
+          type: integer
+          example: 0
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransactionResponseData'
+        size:
+          type: integer
+          example: 0
+
+    BlocksListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            blocks:
+              type: array
+              items:
+                $ref: '#/components/schemas/BlockData'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+
+    # 交易相关
+    TransactionRequest:
+      type: object
+      required:
+        - from
+        - to
+        - amount
+        - fee
+        - nonce
+      properties:
+        from:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          example: "0x1234..."
+        to:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          example: "0x5678..."
+        amount:
+          type: integer
+          format: int64
+          example: 1000
+        fee:
+          type: integer
+          format: int64
+          example: 10
+        nonce:
+          type: integer
+          format: int64
+          example: 1
+        data:
+          type: string
+          example: "0x..."
+
+    TransactionSubmitResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            tx_hash:
+              type: string
+              example: "0x..."
+            status:
+              type: string
+              example: "pending"
+            message:
+              type: string
+              example: "Transaction submitted successfully"
+            timestamp:
+              type: string
+              format: date-time
+              example: "2023-01-01T12:00:00Z"
+
+    TransactionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/TransactionResponseData'
+
+    TransactionResponseData:
+      type: object
+      properties:
+        hash:
+          type: string
+          example: "0x..."
+        from:
+          type: string
+          example: "0x1234567890123456789012345678901234567890"
+        to:
+          type: string
+          example: "0x0987654321098765432109876543210987654321"
+        amount:
+          type: integer
+          format: int64
+          example: 1000000
+        fee:
+          type: integer
+          format: int64
+          example: 1000
+        nonce:
+          type: integer
+          format: int64
+          example: 1
+        timestamp:
+          type: string
+          format: date-time
+          example: "2023-01-01T11:00:00Z"
+        status:
+          type: string
+          example: "confirmed"
+        block_hash:
+          type: string
+          example: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        block_height:
+          type: integer
+          format: int64
+          example: 100
+
+    TransactionsListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            transactions:
+              type: array
+              items:
+                $ref: '#/components/schemas/TransactionResponseData'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              type: object
+              properties:
+                address:
+                  type: string
+                  example: "0x1234..."
+                status:
+                  type: string
+                  example: "confirmed"
+
+    # 账户相关
+    AccountResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/AccountData'
+
+    AccountData:
+      type: object
+      properties:
+        address:
+          type: string
+          example: "0x1234567890123456789012345678901234567890"
+        balance:
+          type: integer
+          format: int64
+          example: 1000000
+        nonce:
+          type: integer
+          format: int64
+          example: 5
+        tx_count:
+          type: integer
+          format: int64
+          example: 10
+
+    AccountBalanceResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            address:
+              type: string
+              example: "0x1234567890123456789012345678901234567890"
+            balance:
+              type: integer
+              format: int64
+              example: 1000000
+            timestamp:
+              type: string
+              format: date-time
+              example: "2023-01-01T12:00:00Z"
+
+    AccountTransactionsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            address:
+              type: string
+              example: "0x1234567890123456789012345678901234567890"
+            transactions:
+              type: array
+              items:
+                $ref: '#/components/schemas/TransactionResponseData'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+
+    # 验证者相关
+    ValidatorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/ValidatorData'
+
+    ValidatorData:
+      type: object
+      properties:
+        address:
+          type: string
+          example: "0xf5a849e14271805ae7501a4ca4bcba6b8c6b5833"
+        stake:
+          type: integer
+          format: int64
+          example: 10000
+        commission:
+          type: number
+          format: float
+          example: 0.1
+        status:
+          type: string
+          example: "active"
+        blocks_produced:
+          type: integer
+          format: int64
+          example: 100
+        last_active:
+          type: string
+          format: date-time
+          example: "2023-01-01T11:55:00Z"
+
+    ValidatorsListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            validators:
+              type: array
+              items:
+                $ref: '#/components/schemas/ValidatorData'
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              type: object
+              properties:
+                status:
+                  type: string
+                  example: "active"
+
+    ValidatorDelegatorsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            validator_address:
+              type: string
+              example: "0xf5a849e14271805ae7501a4ca4bcba6b8c6b5833"
+            delegators:
+              type: array
+              items:
+                type: object
+            total_delegated:
+              type: integer
+              format: int64
+              example: 0
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+
+    # 网络相关
+    NetworkInfoResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/NetworkInfo'
+
+    PeersListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            peers:
+              type: array
+              items:
+                type: object
+                properties:
+                  peer_id:
+                    type: string
+                    example: "12D3KooWExample1"
+                  address:
+                    type: string
+                    example: "/ip4/127.0.0.1/tcp/8080"
+                  status:
+                    type: string
+                    example: "connected"
+                  connected_at:
+                    type: string
+                    format: date-time
+                    example: "2023-01-01T11:00:00Z"
+                  latency:
+                    type: string
+                    example: "50ms"
+                  version:
+                    type: string
+                    example: "1.0.0"
+            pagination:
+              $ref: '#/components/schemas/Pagination'
+            filters:
+              type: object
+              properties:
+                status:
+                  type: string
+                  example: "connected"
+            summary:
+              type: object
+              properties:
+                total_peers:
+                  type: integer
+                  example: 1
+                connected_peers:
+                  type: integer
+                  example: 1
+                disconnected_peers:
+                  type: integer
+                  example: 0
+
+    NetworkStatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            network_info:
+              type: object
+              properties:
+                node_id:
+                  type: string
+                  example: "12D3KooWDDsqVJ8ZekJaBhK8hZiU7steYxVFkeJxyJHBudY4ckNf"
+                listen_addresses:
+                  type: array
+                  items:
+                    type: string
+                  example: ["/ip4/127.0.0.1/tcp/8080", "/ip4/192.168.3.25/tcp/8080"]
+                protocol_version:
+                  type: string
+                  example: "1.0.0"
+                network_id:
+                  type: string
+                  example: "shardmatrix"
+            connection_stats:
+              type: object
+              properties:
+                total_peers:
+                  type: integer
+                  example: 1
+                connected_peers:
+                  type: integer
+                  example: 1
+                inbound_peers:
+                  type: integer
+                  example: 0
+                outbound_peers:
+                  type: integer
+                  example: 1
+                max_peers:
+                  type: integer
+                  example: 50
+                connection_rate:
+                  type: string
+                  example: "1.0/min"
+                disconnection_rate:
+                  type: string
+                  example: "0.0/min"
+            message_stats:
+              type: object
+              properties:
+                messages_sent:
+                  type: integer
+                  example: 100
+                messages_received:
+                  type: integer
+                  example: 95
+                bytes_sent:
+                  type: integer
+                  example: 1024000
+                bytes_received:
+                  type: integer
+                  example: 980000
+                message_rate:
+                  type: string
+                  example: "10.5/sec"
+                bandwidth_usage:
+                  type: string
+                  example: "50KB/s"
+            discovery_stats:
+              type: object
+              properties:
+                dht_peers:
+                  type: integer
+                  example: 10
+                mdns_discoveries:
+                  type: integer
+                  example: 5
+                bootstrap_peers:
+                  type: integer
+                  example: 3
+                discovery_rate:
+                  type: string
+                  example: "2.0/min"
+                routing_table_size:
+                  type: integer
+                  example: 8
+            health_metrics:
+              type: object
+              properties:
+                uptime:
+                  type: string
+                  example: "2h30m45s"
+                last_block_time:
+                  type: string
+                  format: date-time
+                  example: "2023-01-01T11:59:58Z"
+                network_latency:
+                  type: string
+                  example: "25ms"
+                sync_status:
+                  type: string
+                  example: "synced"
+                error_rate:
+                  type: string
+                  example: "0.1%"
+            timestamp:
+              type: string
+              format: date-time
+              example: "2023-01-01T12:00:00Z"
+
+    NetworkHealthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              example: "healthy"
+            checks:
+              type: object
+              properties:
+                connectivity:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                      example: "pass"
+                    message:
+                      type: string
+                      example: "All network connections are stable"
+                    details:
+                      type: object
+                      properties:
+                        connected_peers:
+                          type: integer
+                          example: 1
+                        target_peers:
+                          type: integer
+                          example: 3
+                        success_rate:
+                          type: string
+                          example: "100%"
+                latency:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                      example: "pass"
+                    message:
+                      type: string
+                      example: "Network latency is within acceptable range"
+                    details:
+                      type: object
+                      properties:
+                        average_latency:
+                          type: string
+                          example: "25ms"
+                        max_latency:
+                          type: string
+                          example: "50ms"
+                        threshold:
+                          type: string
+                          example: "100ms"
+                discovery:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                      example: "pass"
+                    message:
+                      type: string
+                      example: "Node discovery is working properly"
+                    details:
+                      type: object
+                      properties:
+                        dht_peers:
+                          type: integer
+                          example: 10
+                        mdns_discoveries:
+                          type: integer
+                          example: 5
+                        bootstrap_success:
+                          type: boolean
+                          example: true
+                        routing_table_size:
+                          type: integer
+                          example: 8
+                sync:
+                  type: object
+                  properties:
+                    status:
+                      type: string
+                      example: "pass"
+                    message:
+                      type: string
+                      example: "Node is fully synchronized"
+                    details:
+                      type: object
+                      properties:
+                        sync_status:
+                          type: string
+                          example: "synced"
+                        last_block_time:
+                          type: string
+                          format: date-time
+                          example: "2023-01-01T11:59:58Z"
+                        block_lag:
+                          type: integer
+                          example: 0
+                        sync_progress:
+                          type: string
+                          example: "100%"
+            overall_score:
+              type: integer
+              example: 100
+            timestamp:
+              type: string
+              format: date-time
+              example: "2023-01-01T12:00:00Z"
+            uptime:
+              type: string
+              example: "2h30m45s"
+
+    # 共识相关
+    ConsensusInfoResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/ConsensusInfo'
+
+    ConsensusValidatorsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            current_epoch:
+              type: integer
+              format: int64
+              example: 28334458
+            epoch_start_time:
+              type: string
+              format: date-time
+              example: "2023-01-01T11:00:00Z"
+            epoch_duration:
+              type: string
+              example: "1h"
+            active_validators:
+              type: array
+              items:
+                type: object
+                properties:
+                  address:
+                    type: string
+                    example: "0xd839ecfa599e5ed329c3905870c484695e17a509"
+                  stake:
+                    type: integer
+                    format: int64
+                    example: 10000
+                  voting_power:
+                    type: number
+                    format: float
+                    example: 1.0
+                  status:
+                    type: string
+                    example: "active"
+                  blocks_produced:
+                    type: integer
+                    format: int64
+                    example: 50
+                  blocks_missed:
+                    type: integer
+                    format: int64
+                    example: 0
+                  uptime:
+                    type: string
+                    example: "100%"
+                  last_active:
+                    type: string
+                    format: date-time
+                    example: "2023-01-01T11:58:00Z"
+            validator_stats:
+              type: object
+              properties:
+                total_validators:
+                  type: integer
+                  example: 1
+                active_validators:
+                  type: integer
+                  example: 1
+                inactive_validators:
+                  type: integer
+                  example: 0
+                jailed_validators:
+                  type: integer
+                  example: 0
+                total_stake:
+                  type: integer
+                  format: int64
+                  example: 10000
+                average_uptime:
+                  type: string
+                  example: "100%"
+            next_epoch:
+              type: object
+              properties:
+                epoch_number:
+                  type: integer
+                  format: int64
+                  example: 28334459
+                start_time:
+                  type: string
+                  format: date-time
+                  example: "2023-01-01T12:00:00Z"
+                validator_set:
+                  type: integer
+                  example: 1
+                stake_changes:
+                  type: integer
+                  example: 0
+
+    # 分页相关
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          example: 0
+        has_more:
+          type: boolean
+          example: false
+
+tags:
+  - name: Health
+    description: 健康检查相关接口
+  - name: Status
+    description: 节点状态相关接口
+  - name: Blocks
+    description: 区块相关接口
+  - name: Transactions
+    description: 交易相关接口
+  - name: Accounts
+    description: 账户相关接口
+  - name: Validators
+    description: 验证者相关接口
+  - name: Network
+    description: 网络相关接口
+  - name: Consensus
+    description: 共识相关接口

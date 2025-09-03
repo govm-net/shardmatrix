@@ -38,6 +38,12 @@ example-leveldb:
 	@echo "Running LevelDB storage example..."
 	go run examples/leveldb_storage_example.go
 
+# 运行API使用示例
+.PHONY: example-api
+example-api:
+	@echo "Running API usage example..."
+	go run examples/api_usage.go
+
 # 测试
 .PHONY: test
 test:
@@ -133,6 +139,7 @@ help:
 	@echo "  run            - Run the node"
 	@echo "  example        - Run the basic usage example"
 	@echo "  example-leveldb- Run the LevelDB storage example"
+	@echo "  example-api    - Run the API usage example"
 	@echo "  test           - Run tests"
 	@echo "  test-storage   - Run storage tests"
 	@echo "  test-coverage  - Run tests with coverage report"
