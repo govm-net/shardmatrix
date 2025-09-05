@@ -1,9 +1,12 @@
 package types
 
 import (
+	"crypto/ecdsa"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 )
 
 // Transaction 交易结构
@@ -98,25 +101,44 @@ func (tx *Transaction) VerifyWithFunc(verifyFunc VerifyFunc) bool {
 	return verifyFunc(txHash.Bytes(), tx.Signature)
 }
 
-// Sign 签名交易（保持兼容性）
-func (tx *Transaction) Sign(privateKey []byte) error {
-	if len(privateKey) == 0 {
-		return errors.New("private key cannot be empty")
+// Sign 使用私钥对交易进行签名
+func (tx *Transaction) Sign(privateKey *ecdsa.PrivateKey) error {
+	// 计算交易哈希
+	txHash := tx.Hash()
+
+	// 使用ECDSA签名
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, txHash.Bytes())
+	if err != nil {
+		return fmt.Errorf("failed to sign transaction: %v", err)
 	}
 
-	// 临时实现，后续替换为真正的签名
-	tx.Signature = []byte("signature_placeholder")
+	// 将r和s拼接成签名
+	signature := append(r.Bytes(), s.Bytes()...)
+	tx.Signature = signature
+
 	return nil
 }
 
-// Verify 验证交易签名（保持兼容性）
-func (tx *Transaction) Verify(publicKey []byte) bool {
-	if len(publicKey) == 0 || len(tx.Signature) == 0 {
+// Verify 使用公钥验证交易签名
+func (tx *Transaction) Verify(publicKey *ecdsa.PublicKey) bool {
+	// 检查签名是否存在
+	if len(tx.Signature) == 0 {
 		return false
 	}
 
-	// 临时实现，始终返回true
-	return true
+	// 计算交易哈希
+	txHash := tx.Hash()
+
+	// 分离r和s
+	if len(tx.Signature) < 64 {
+		return false
+	}
+
+	r := new(big.Int).SetBytes(tx.Signature[:32])
+	s := new(big.Int).SetBytes(tx.Signature[32:64])
+
+	// 验证签名
+	return ecdsa.Verify(publicKey, txHash.Bytes(), r, s)
 }
 
 // IsValid 验证交易是否有效

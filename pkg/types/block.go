@@ -1,8 +1,12 @@
 package types
 
 import (
+	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"math/big"
 	"time"
 )
 
@@ -133,6 +137,66 @@ func (b *Block) Size() int {
 		return 0
 	}
 	return len(data)
+}
+
+// SignBlock 使用私钥对区块进行签名
+func (b *Block) SignBlock(privateKey *ecdsa.PrivateKey) error {
+	// 创建临时区块头用于签名（不包含签名字段）
+	tempHeader := *b.Header
+	tempHeader.Signature = nil
+
+	// 序列化区块头
+	headerData, err := tempHeader.Serialize()
+	if err != nil {
+		return fmt.Errorf("failed to serialize block header: %v", err)
+	}
+
+	// 计算哈希
+	hash := sha256.Sum256(headerData)
+
+	// 使用ECDSA签名
+	r, s, err := ecdsa.Sign(rand.Reader, privateKey, hash[:])
+	if err != nil {
+		return fmt.Errorf("failed to sign block: %v", err)
+	}
+
+	// 将r和s拼接成签名
+	signature := append(r.Bytes(), s.Bytes()...)
+	b.Header.Signature = signature
+
+	return nil
+}
+
+// VerifyBlockSignature 验证区块签名
+func (b *Block) VerifyBlockSignature(publicKey *ecdsa.PublicKey) bool {
+	// 检查是否有签名
+	if len(b.Header.Signature) == 0 {
+		return false
+	}
+
+	// 创建临时区块头用于验证（不包含签名字段）
+	tempHeader := *b.Header
+	tempHeader.Signature = nil
+
+	// 序列化区块头
+	headerData, err := tempHeader.Serialize()
+	if err != nil {
+		return false
+	}
+
+	// 分离r和s
+	if len(b.Header.Signature) < 64 {
+		return false
+	}
+
+	r := new(big.Int).SetBytes(b.Header.Signature[:32])
+	s := new(big.Int).SetBytes(b.Header.Signature[32:64])
+
+	// 计算数据的哈希
+	hash := sha256.Sum256(headerData)
+
+	// 验证签名
+	return ecdsa.Verify(publicKey, hash[:], r, s)
 }
 
 // calculateMerkleRoot 计算Merkle根

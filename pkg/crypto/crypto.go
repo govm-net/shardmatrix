@@ -125,6 +125,7 @@ func ValidateAddress(address types.Address) bool {
 func RecoverPublicKey(data []byte, signature []byte) (*ecdsa.PublicKey, error) {
 	// 注意：这是一个简化版本，实际的公钥恢复需要更复杂的算法
 	// 在实际应用中，应该使用包含恢复ID的签名格式
+	// 这里我们返回一个错误，表示该功能尚未完全实现
 	return nil, fmt.Errorf("public key recovery not implemented yet")
 }
 

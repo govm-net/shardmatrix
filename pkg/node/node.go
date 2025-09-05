@@ -783,6 +783,11 @@ func (n *Node) GetChainHealth() *blockchain.ChainHealth {
 	return n.blockchain.GetChainHealth()
 }
 
+// GetChainState 获取区块链状态
+func (n *Node) GetChainState() *blockchain.ChainState {
+	return n.blockchain.GetChainState()
+}
+
 // StartSync 开始同步
 func (n *Node) StartSync(peerID string, targetHeight uint64) error {
 	return n.blockchain.StartSync(peerID, targetHeight)

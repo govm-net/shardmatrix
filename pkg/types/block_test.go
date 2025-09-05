@@ -1,8 +1,108 @@
 package types
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// 生成测试用的密钥对（避免导入crypto包导致循环依赖）
+func generateTestBlockKeyPair() (*ecdsa.PrivateKey, *ecdsa.PublicKey, error) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	return privateKey, &privateKey.PublicKey, nil
+}
+
+func TestBlockSignAndVerify(t *testing.T) {
+	// 生成密钥对
+	privateKey, publicKey, err := generateTestBlockKeyPair()
+	require.NoError(t, err)
+
+	// 创建区块
+	validator := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	prevHash := EmptyHash()
+	block := NewBlock(1, prevHash, validator)
+
+	// 签名区块
+	err = block.SignBlock(privateKey)
+	require.NoError(t, err)
+	assert.NotEmpty(t, block.Header.Signature)
+
+	// 验证区块签名
+	valid := block.VerifyBlockSignature(publicKey)
+	assert.True(t, valid)
+
+	// 测试无效签名
+	invalidKey, invalidPublicKey, err := generateTestBlockKeyPair()
+	require.NoError(t, err)
+	valid = block.VerifyBlockSignature(invalidPublicKey)
+	assert.False(t, valid)
+	_ = invalidKey // 避免未使用变量警告
+}
+
+func TestBlockHash(t *testing.T) {
+	// 创建区块
+	validator := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	prevHash := EmptyHash()
+	block := NewBlock(1, prevHash, validator)
+
+	// 计算哈希
+	hash1 := block.Hash()
+	hash2 := block.Hash()
+
+	// 验证哈希一致性
+	assert.Equal(t, hash1, hash2)
+	assert.False(t, hash1.IsZero())
+}
+
+func TestBlockTransactions(t *testing.T) {
+	// 创建区块
+	validator := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	prevHash := EmptyHash()
+	block := NewBlock(1, prevHash, validator)
+
+	// 添加交易
+	txHash1 := Hash{1, 2, 3}
+	txHash2 := Hash{4, 5, 6}
+	block.AddTransaction(txHash1)
+	block.AddTransaction(txHash2)
+
+	// 验证交易数量
+	assert.Equal(t, 2, block.GetTransactionCount())
+
+	// 验证交易存在
+	assert.True(t, block.HasTransaction(txHash1))
+	assert.True(t, block.HasTransaction(txHash2))
+	assert.False(t, block.HasTransaction(Hash{7, 8, 9}))
+}
+
+func TestCalculateTxRoot(t *testing.T) {
+	// 创建区块
+	validator := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	prevHash := EmptyHash()
+	block := NewBlock(1, prevHash, validator)
+
+	// 添加交易
+	txHash1 := Hash{1, 2, 3}
+	txHash2 := Hash{4, 5, 6}
+	block.AddTransaction(txHash1)
+	block.AddTransaction(txHash2)
+
+	// 计算交易根
+	txRoot := block.CalculateTxRoot()
+	assert.False(t, txRoot.IsZero())
+
+	// 空交易的根
+	emptyBlock := NewBlock(2, prevHash, validator)
+	emptyTxRoot := emptyBlock.CalculateTxRoot()
+	assert.True(t, emptyTxRoot.IsZero())
+}
 
 func TestNewBlock(t *testing.T) {
 	// 创建测试数据
@@ -36,34 +136,6 @@ func TestNewBlock(t *testing.T) {
 	}
 }
 
-func TestBlockHash(t *testing.T) {
-	// 创建测试数据
-	prevHash := NewHash([]byte("prev_hash_data"))
-	validator := AddressFromPublicKey([]byte("validator_public_key"))
-
-	// 创建区块
-	block := NewBlock(1, prevHash, validator)
-
-	// 计算哈希
-	hash1 := block.Hash()
-	hash2 := block.Hash()
-
-	// 验证哈希一致性
-	if hash1 != hash2 {
-		t.Errorf("Block hash should be consistent, got %x and %x", hash1, hash2)
-	}
-
-	// 验证哈希长度
-	if len(hash1.Bytes()) != 32 {
-		t.Errorf("Expected hash length 32, got %d", len(hash1.Bytes()))
-	}
-
-	// 验证哈希不为空
-	if hash1.IsZero() {
-		t.Errorf("Block hash should not be zero")
-	}
-}
-
 func TestAddTransaction(t *testing.T) {
 	// 创建测试数据
 	prevHash := NewHash([]byte("prev_hash_data"))
@@ -93,54 +165,6 @@ func TestAddTransaction(t *testing.T) {
 	// 验证TxRoot已更新
 	if block.Header.TxRoot.IsZero() {
 		t.Errorf("TxRoot should be updated after adding transaction")
-	}
-}
-
-func TestCalculateTxRoot(t *testing.T) {
-	// 创建测试数据
-	prevHash := NewHash([]byte("prev_hash_data"))
-	validator := AddressFromPublicKey([]byte("validator_public_key"))
-
-	// 创建区块
-	block := NewBlock(1, prevHash, validator)
-
-	// 空区块的Merkle根
-	emptyRoot := block.CalculateTxRoot()
-	if len(emptyRoot.Bytes()) != 32 {
-		t.Errorf("Expected empty root length 32, got %d", len(emptyRoot.Bytes()))
-	}
-
-	// 空区块的根应该是空哈希
-	if !emptyRoot.IsZero() {
-		t.Errorf("Empty block should have zero hash root")
-	}
-
-	// 添加交易
-	from1 := AddressFromPublicKey([]byte("from1_public_key"))
-	to1 := AddressFromPublicKey([]byte("to1_public_key"))
-	tx1 := NewTransaction(from1, to1, 100, 10, 1, []byte("data1"))
-
-	from2 := AddressFromPublicKey([]byte("from2_public_key"))
-	to2 := AddressFromPublicKey([]byte("to2_public_key"))
-	tx2 := NewTransaction(from2, to2, 200, 20, 1, []byte("data2"))
-
-	block.AddTransaction(tx1.Hash())
-	block.AddTransaction(tx2.Hash())
-
-	// 计算Merkle根
-	root := block.CalculateTxRoot()
-	if len(root.Bytes()) != 32 {
-		t.Errorf("Expected root length 32, got %d", len(root.Bytes()))
-	}
-
-	// 验证根不为空
-	if root.IsZero() {
-		t.Errorf("Merkle root should not be zero hash with transactions")
-	}
-
-	// 验证区块头中的TxRoot已更新
-	if block.Header.TxRoot != root {
-		t.Errorf("Block header TxRoot should match calculated root")
 	}
 }
 

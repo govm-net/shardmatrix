@@ -57,8 +57,8 @@ func (dpos *DPoSConsensus) RegisterValidator(address types.Address, stake uint64
 		}
 	}
 
-	// 创建验证者
-	validator := types.NewValidator(address, stake)
+	// 创建验证者（使用空公钥，实际应用中应该提供真实公钥）
+	validator := types.NewValidator(address, nil, stake)
 	validatorInfo := &ValidatorInfo{
 		Validator:      validator,
 		TotalStake:     stake,

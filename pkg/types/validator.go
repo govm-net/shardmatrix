@@ -31,6 +31,7 @@ func (vs ValidatorStatus) String() string {
 // Validator 验证者结构
 type Validator struct {
 	Address    Address         `json:"address"`     // 验证者地址
+	PublicKey  []byte          `json:"public_key"`  // 验证者公钥
 	Stake      uint64          `json:"stake"`       // 质押数量
 	Status     ValidatorStatus `json:"status"`      // 验证者状态
 	LastBlock  uint64          `json:"last_block"`  // 最后出块高度
@@ -40,10 +41,11 @@ type Validator struct {
 }
 
 // NewValidator 创建新验证者
-func NewValidator(address Address, stake uint64) *Validator {
+func NewValidator(address Address, publicKey []byte, stake uint64) *Validator {
 	now := time.Now().Unix()
 	return &Validator{
 		Address:    address,
+		PublicKey:  publicKey,
 		Stake:      stake,
 		Status:     ValidatorActive,
 		LastBlock:  0,
@@ -97,6 +99,7 @@ func (v *Validator) CanValidate() bool {
 func (v *Validator) Clone() *Validator {
 	return &Validator{
 		Address:    v.Address,
+		PublicKey:  append([]byte(nil), v.PublicKey...), // 深拷贝公钥
 		Stake:      v.Stake,
 		Status:     v.Status,
 		LastBlock:  v.LastBlock,

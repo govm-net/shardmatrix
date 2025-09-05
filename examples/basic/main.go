@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/govm-net/shardmatrix/pkg/crypto"
 	"github.com/govm-net/shardmatrix/pkg/types"
 )
 
@@ -12,10 +13,16 @@ func main() {
 	// 1. 创建交易
 	fmt.Println("\n1. 创建交易...")
 
+	// 生成密钥对
+	aliceKeyPair, _ := crypto.GenerateKeyPair()
+	bobKeyPair, _ := crypto.GenerateKeyPair()
+	validatorKeyPair, _ := crypto.GenerateKeyPair()
+
 	// 创建地址
-	aliceAddr := types.AddressFromPublicKey([]byte("alice_public_key"))
-	bobAddr := types.AddressFromPublicKey([]byte("bob_public_key"))
+	aliceAddr := aliceKeyPair.GetAddress()
+	bobAddr := bobKeyPair.GetAddress()
 	charlieAddr := types.AddressFromPublicKey([]byte("charlie_public_key"))
+	validatorAddr := validatorKeyPair.GetAddress()
 
 	tx1 := types.NewTransaction(
 		aliceAddr,                    // 发送方地址
@@ -36,8 +43,8 @@ func main() {
 	)
 
 	// 签名交易
-	tx1.Sign([]byte("alice_private_key"))
-	tx2.Sign([]byte("bob_private_key"))
+	tx1.Sign(aliceKeyPair.PrivateKey)
+	tx2.Sign(bobKeyPair.PrivateKey)
 
 	fmt.Printf("交易1哈希: %x\n", tx1.Hash())
 	fmt.Printf("交易2哈希: %x\n", tx2.Hash())
@@ -47,7 +54,6 @@ func main() {
 
 	// 创建前一个区块哈希和验证者地址
 	prevHash := types.NewHash([]byte("genesis_block_hash"))
-	validatorAddr := types.AddressFromPublicKey([]byte("validator_public_key"))
 
 	block := types.NewBlock(
 		1,             // 区块高度
@@ -59,12 +65,11 @@ func main() {
 	block.AddTransaction(tx1.Hash())
 	block.AddTransaction(tx2.Hash())
 
-	// 计算交易Merkle根
-	txRoot := block.CalculateTxRoot()
-	block.Header.TxRoot = txRoot
+	// 签名区块
+	block.SignBlock(validatorKeyPair.PrivateKey)
 
 	fmt.Printf("区块哈希: %x\n", block.Hash())
-	fmt.Printf("交易Merkle根: %x\n", txRoot)
+	fmt.Printf("交易Merkle根: %x\n", block.Header.TxRoot)
 	fmt.Printf("区块包含 %d 个交易\n", len(block.Transactions))
 
 	// 3. 验证交易
@@ -88,6 +93,13 @@ func main() {
 		fmt.Println("区块哈希计算正确")
 	} else {
 		fmt.Println("区块哈希计算错误")
+	}
+
+	// 验证区块签名
+	if block.VerifyBlockSignature(&validatorKeyPair.PrivateKey.PublicKey) {
+		fmt.Println("区块签名验证通过")
+	} else {
+		fmt.Println("区块签名验证失败")
 	}
 
 	// 5. 显示区块信息

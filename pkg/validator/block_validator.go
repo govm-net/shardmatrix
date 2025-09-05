@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/govm-net/shardmatrix/pkg/crypto"
 	"github.com/govm-net/shardmatrix/pkg/storage"
 	"github.com/govm-net/shardmatrix/pkg/types"
 )
@@ -296,14 +297,13 @@ func (bv *BlockValidator) ValidateSignature(block *types.Block) error {
 	// 计算区块哈希（不包含签名）
 	tempHeader := *block.Header
 	tempHeader.Signature = nil
-	headerData, err := (&tempHeader).Serialize()
+	_, err := (&tempHeader).Serialize()
 	if err != nil {
 		return NewValidationError("SERIALIZATION_ERROR",
 			fmt.Sprintf("failed to serialize header: %v", err))
 	}
 
 	// 验证签名（需要验证者的公钥）
-	// 这里需要从验证者信息中获取公钥
 	if bv.validatorStore != nil {
 		validator, err := bv.validatorStore.GetValidator(block.Header.Validator)
 		if err != nil {
@@ -311,11 +311,24 @@ func (bv *BlockValidator) ValidateSignature(block *types.Block) error {
 				fmt.Sprintf("failed to get validator for signature verification: %v", err))
 		}
 
-		// 假设验证者有公钥字段（需要扩展Validator结构）
-		// 这里使用地址作为临时公钥
-		// TODO: 实现正确的公钥恢复和签名验证
-		_ = validator  // 避免未使用变量警告
-		_ = headerData // 避免未使用变量警告
+		// 检查验证者是否有公钥
+		if len(validator.PublicKey) == 0 {
+			return NewValidationError("MISSING_PUBLIC_KEY",
+				"validator public key is required for signature verification")
+		}
+
+		// 从字节恢复公钥
+		publicKey, err := crypto.PublicKeyFromBytes(validator.PublicKey)
+		if err != nil {
+			return NewValidationError("INVALID_PUBLIC_KEY",
+				fmt.Sprintf("failed to parse validator public key: %v", err))
+		}
+
+		// 验证签名
+		if !block.VerifyBlockSignature(publicKey) {
+			return NewValidationError("INVALID_SIGNATURE",
+				"block signature verification failed")
+		}
 	}
 
 	return nil

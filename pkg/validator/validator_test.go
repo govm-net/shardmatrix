@@ -4,9 +4,129 @@ import (
 	"testing"
 	"time"
 
+	"github.com/govm-net/shardmatrix/pkg/crypto"
 	"github.com/govm-net/shardmatrix/pkg/storage"
 	"github.com/govm-net/shardmatrix/pkg/types"
+	"github.com/stretchr/testify/require"
 )
+
+func TestBlockValidatorWithSignature(t *testing.T) {
+	// 创建存储
+	blockStore := storage.NewMemoryBlockStore()
+	transactionStore := storage.NewMemoryTransactionStore()
+	validatorStore := storage.NewMemoryValidatorStore()
+	accountStore := storage.NewMemoryAccountStore()
+
+	// 创建验证器配置
+	config := DefaultValidationConfig()
+	config.RequireSignature = true
+
+	// 创建区块验证器
+	blockValidator := NewBlockValidator(config, blockStore, transactionStore, validatorStore, accountStore)
+
+	// 生成密钥对
+	keyPair, err := crypto.GenerateKeyPair()
+	require.NoError(t, err)
+
+	// 创建验证者
+	validatorAddr := keyPair.GetAddress()
+	// 将公钥转换为字节
+	pubKeyBytes := append(keyPair.PublicKey.X.Bytes(), keyPair.PublicKey.Y.Bytes()...)
+	validator := types.NewValidator(validatorAddr, pubKeyBytes, 1000)
+	err = validatorStore.PutValidator(validator)
+	require.NoError(t, err)
+
+	// 创建创世区块（不需要签名）
+	genesisBlock := types.NewGenesisBlock(validatorAddr)
+	err = blockValidator.ValidateBlock(genesisBlock)
+	require.NoError(t, err)
+
+	// 存储创世区块
+	err = blockStore.PutBlock(genesisBlock)
+	require.NoError(t, err)
+
+	// 创建新区块
+	newBlock := types.NewBlock(1, genesisBlock.Hash(), validatorAddr)
+
+	// 签名区块
+	err = newBlock.SignBlock(keyPair.PrivateKey)
+	require.NoError(t, err)
+
+	// 验证区块
+	err = blockValidator.ValidateBlock(newBlock)
+	require.NoError(t, err)
+}
+
+func TestTransactionValidatorWithSignature(t *testing.T) {
+	// 不创建账户存储（传递nil）
+
+	// 创建验证器配置
+	config := DefaultValidationConfig()
+
+	// 创建交易验证器（不传递账户存储）
+	txValidator := NewTransactionValidator(config, nil)
+
+	// 生成密钥对
+	keyPair, err := crypto.GenerateKeyPair()
+	require.NoError(t, err)
+
+	// 创建交易
+	from := keyPair.GetAddress()
+	to := types.Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	tx := types.NewTransaction(from, to, 100, 10, 1, []byte("test data"))
+
+	// 签名交易
+	err = tx.Sign(keyPair.PrivateKey)
+	require.NoError(t, err)
+
+	// 验证交易（应该通过签名长度检查）
+	err = txValidator.ValidateTransaction(tx)
+	// 由于没有账户存储，应该只验证格式和签名长度
+	require.NoError(t, err)
+}
+
+func TestBlockValidatorWithoutSignature(t *testing.T) {
+	// 创建存储
+	blockStore := storage.NewMemoryBlockStore()
+	transactionStore := storage.NewMemoryTransactionStore()
+	validatorStore := storage.NewMemoryValidatorStore()
+	accountStore := storage.NewMemoryAccountStore()
+
+	// 创建验证器配置（不要求签名）
+	config := DefaultValidationConfig()
+	config.RequireSignature = false
+
+	// 创建区块验证器
+	blockValidator := NewBlockValidator(config, blockStore, transactionStore, validatorStore, accountStore)
+
+	// 生成密钥对
+	keyPair, err := crypto.GenerateKeyPair()
+	require.NoError(t, err)
+
+	// 创建验证者
+	validatorAddr := keyPair.GetAddress()
+	// 将公钥转换为字节
+	pubKeyBytes := append(keyPair.PublicKey.X.Bytes(), keyPair.PublicKey.Y.Bytes()...)
+	validator := types.NewValidator(validatorAddr, pubKeyBytes, 1000)
+	err = validatorStore.PutValidator(validator)
+	require.NoError(t, err)
+
+	// 创建创世区块（不需要签名）
+	genesisBlock := types.NewGenesisBlock(validatorAddr)
+	err = blockValidator.ValidateBlock(genesisBlock)
+	require.NoError(t, err)
+
+	// 存储创世区块
+	err = blockStore.PutBlock(genesisBlock)
+	require.NoError(t, err)
+
+	// 创建新区块（无签名）
+	newBlock := types.NewBlock(1, genesisBlock.Hash(), validatorAddr)
+
+	// 验证区块（应该通过，因为不要求签名）
+	err = blockValidator.ValidateBlock(newBlock)
+	require.NoError(t, err)
+}
 
 func TestValidator_NewValidator(t *testing.T) {
 	config := DefaultValidationConfig()

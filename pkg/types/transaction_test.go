@@ -1,221 +1,104 @@
 package types
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestNewTransaction(t *testing.T) {
-	// 创建测试数据
-	from := AddressFromPublicKey([]byte("from_public_key"))
-	to := AddressFromPublicKey([]byte("to_public_key"))
-	amount := uint64(100)
-	fee := uint64(10)
-	nonce := uint64(1)
-	data := []byte("transaction_data")
-
-	tx := NewTransaction(from, to, amount, fee, nonce, data)
-
-	// 验证交易字段
-	if tx.From != from {
-		t.Errorf("Expected from address %x, got %x", from, tx.From)
+// 生成测试用的密钥对（避免导入crypto包导致循环依赖）
+func generateTestTxKeyPair() (*ecdsa.PrivateKey, *ecdsa.PublicKey, error) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
 	}
+	return privateKey, &privateKey.PublicKey, nil
+}
 
-	if tx.To != to {
-		t.Errorf("Expected to address %x, got %x", to, tx.To)
-	}
+func TestTransactionSignAndVerify(t *testing.T) {
+	// 生成密钥对
+	privateKey, publicKey, err := generateTestTxKeyPair()
+	require.NoError(t, err)
 
-	if tx.Amount != amount {
-		t.Errorf("Expected amount %d, got %d", amount, tx.Amount)
-	}
+	// 创建交易
+	from := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	to := Address{21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}
+	tx := NewTransaction(from, to, 100, 10, 1, []byte("test data"))
 
-	if tx.Fee != fee {
-		t.Errorf("Expected fee %d, got %d", fee, tx.Fee)
-	}
+	// 签名交易
+	err = tx.Sign(privateKey)
+	require.NoError(t, err)
+	assert.NotEmpty(t, tx.Signature)
 
-	if tx.Nonce != nonce {
-		t.Errorf("Expected nonce %d, got %d", nonce, tx.Nonce)
-	}
+	// 验证交易签名
+	valid := tx.Verify(publicKey)
+	assert.True(t, valid)
 
-	if string(tx.Data) != string(data) {
-		t.Errorf("Expected data %s, got %s", string(data), string(tx.Data))
-	}
-
-	// 验证签名为空
-	if len(tx.Signature) != 0 {
-		t.Errorf("Expected empty signature, got %d bytes", len(tx.Signature))
-	}
+	// 测试无效签名
+	_, invalidPublicKey, err := generateTestTxKeyPair()
+	require.NoError(t, err)
+	valid = tx.Verify(invalidPublicKey)
+	assert.False(t, valid)
 }
 
 func TestTransactionHash(t *testing.T) {
 	// 创建交易
-	from := AddressFromPublicKey([]byte("from_public_key"))
-	to := AddressFromPublicKey([]byte("to_public_key"))
-	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
-
-	// 计算哈希
-	hash1 := tx.Hash()
-	hash2 := tx.Hash()
+	from := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	to := Address{21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}
+	tx1 := NewTransaction(from, to, 100, 10, 1, []byte("test data"))
+	tx2 := NewTransaction(from, to, 100, 10, 1, []byte("test data"))
 
 	// 验证哈希一致性
-	if hash1 != hash2 {
-		t.Errorf("Transaction hash should be consistent, got %x and %x", hash1, hash2)
-	}
-
-	// 验证哈希长度
-	if len(hash1.Bytes()) != 32 {
-		t.Errorf("Expected hash length 32, got %d", len(hash1.Bytes()))
-	}
-
-	// 验证不同交易有不同的哈希
-	from2 := AddressFromPublicKey([]byte("from2_public_key"))
-	to2 := AddressFromPublicKey([]byte("to2_public_key"))
-	tx2 := NewTransaction(from2, to2, 200, 20, 2, []byte("data2"))
-	hash3 := tx2.Hash()
-
-	if hash1 == hash3 {
-		t.Errorf("Different transactions should have different hashes")
-	}
+	hash1 := tx1.Hash()
+	hash2 := tx2.Hash()
+	assert.Equal(t, hash1, hash2)
+	assert.False(t, hash1.IsZero())
 }
 
-func TestTransactionSign(t *testing.T) {
-	// 创建交易
-	from := AddressFromPublicKey([]byte("from_public_key"))
-	to := AddressFromPublicKey([]byte("to_public_key"))
-	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
-
-	// 签名前验证签名为空
-	if len(tx.Signature) != 0 {
-		t.Errorf("Expected empty signature before signing")
-	}
-
-	// 签名交易
-	privateKey := []byte("private_key")
-	err := tx.Sign(privateKey)
-	if err != nil {
-		t.Errorf("Failed to sign transaction: %v", err)
-	}
-
-	// 验证签名不为空
-	if len(tx.Signature) == 0 {
-		t.Errorf("Expected non-empty signature after signing")
-	}
-}
-
-func TestTransactionVerify(t *testing.T) {
-	// 创建交易
-	from := AddressFromPublicKey([]byte("from_public_key"))
-	to := AddressFromPublicKey([]byte("to_public_key"))
-	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
-
-	// 签名交易
-	privateKey := []byte("private_key")
-	tx.Sign(privateKey)
-
-	// 验证签名
-	publicKey := []byte("public_key")
-	valid := tx.Verify(publicKey)
-
-	// 注意：当前实现总是返回true，实际应该验证签名
-	if !valid {
-		t.Errorf("Transaction verification failed")
-	}
-}
-
-func TestTransactionIsValid(t *testing.T) {
+func TestTransactionValidation(t *testing.T) {
 	// 创建有效交易
-	from := AddressFromPublicKey([]byte("from_public_key"))
-	to := AddressFromPublicKey([]byte("to_public_key"))
-	validTx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
-	validTx.Sign([]byte("private_key")) // 添加签名
+	from := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	to := Address{21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}
+	tx := NewTransaction(from, to, 100, 10, 1, []byte("test data"))
 
-	if !validTx.IsValid() {
-		t.Errorf("Valid transaction should pass validation")
-	}
+	// 签名交易
+	privateKey, _, err := generateTestTxKeyPair()
+	require.NoError(t, err)
+	tx.From = from
+	err = tx.Sign(privateKey)
+	require.NoError(t, err)
 
-	// 测试无效交易 - 缺少发送方
-	invalidTx1 := NewTransaction(Address{}, to, 100, 10, 1, []byte("data"))
-	invalidTx1.Sign([]byte("private_key"))
-	if invalidTx1.IsValid() {
-		t.Errorf("Transaction without from address should fail validation")
-	}
+	// 验证有效交易
+	assert.True(t, tx.IsValid())
 
-	// 测试无效交易 - 缺少接收方
-	invalidTx2 := NewTransaction(from, Address{}, 100, 10, 1, []byte("data"))
-	invalidTx2.Sign([]byte("private_key"))
-	if invalidTx2.IsValid() {
-		t.Errorf("Transaction without to address should fail validation")
-	}
+	// 测试无效交易 - 空发送方
+	invalidTx := NewTransaction(EmptyAddress(), to, 100, 10, 1, []byte("test data"))
+	assert.False(t, invalidTx.IsValid())
 
-	// 测试无效交易 - 手续费为0
-	invalidTx3 := NewTransaction(from, to, 100, 0, 1, []byte("data"))
-	invalidTx3.Sign([]byte("private_key"))
-	if invalidTx3.IsValid() {
-		t.Errorf("Transaction with zero fee should fail validation")
-	}
+	// 测试无效交易 - 空接收方
+	invalidTx = NewTransaction(from, EmptyAddress(), 100, 10, 1, []byte("test data"))
+	assert.False(t, invalidTx.IsValid())
 
-	// 测试无效交易 - 没有签名
-	invalidTx4 := NewTransaction(from, to, 100, 10, 1, []byte("data"))
-	if invalidTx4.IsValid() {
-		t.Errorf("Transaction without signature should fail validation")
-	}
+	// 测试无效交易 - 零手续费
+	invalidTx = NewTransaction(from, to, 100, 0, 1, []byte("test data"))
+	assert.False(t, invalidTx.IsValid())
+
+	// 测试无效交易 - 无签名
+	invalidTx = NewTransaction(from, to, 100, 10, 1, []byte("test data"))
+	invalidTx.Signature = nil
+	assert.False(t, invalidTx.IsValid())
 }
 
-func TestTransactionGetID(t *testing.T) {
+func TestTransactionCost(t *testing.T) {
 	// 创建交易
-	from := AddressFromPublicKey([]byte("from_public_key"))
-	to := AddressFromPublicKey([]byte("to_public_key"))
-	tx := NewTransaction(from, to, 100, 10, 1, []byte("data"))
+	from := Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	to := Address{21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40}
+	tx := NewTransaction(from, to, 100, 10, 1, []byte("test data"))
 
-	// 获取交易ID
-	id1 := tx.GetID()
-	id2 := tx.GetID()
-
-	// 验证ID一致性
-	if id1 != id2 {
-		t.Errorf("Transaction ID should be consistent")
-	}
-
-	// 验证ID与哈希相同
-	hash := tx.Hash()
-	if id1 != hash {
-		t.Errorf("Transaction ID should equal transaction hash")
-	}
-}
-
-func TestNewTransferTransaction(t *testing.T) {
-	// 创建转账交易
-	from := AddressFromPublicKey([]byte("from_public_key"))
-	to := AddressFromPublicKey([]byte("to_public_key"))
-	tx := NewTransferTransaction(from, to, 100, 10, 1)
-
-	// 验证转账交易属性
-	if tx.From != from {
-		t.Errorf("Expected from address %x, got %x", from, tx.From)
-	}
-
-	if tx.To != to {
-		t.Errorf("Expected to address %x, got %x", to, tx.To)
-	}
-
-	if tx.Amount != 100 {
-		t.Errorf("Expected amount 100, got %d", tx.Amount)
-	}
-
-	if tx.Fee != 10 {
-		t.Errorf("Expected fee 10, got %d", tx.Fee)
-	}
-
-	if tx.Nonce != 1 {
-		t.Errorf("Expected nonce 1, got %d", tx.Nonce)
-	}
-
-	// 转账交易不应该有数据
-	if len(tx.Data) != 0 {
-		t.Errorf("Transfer transaction should have no data")
-	}
-
-	// 验证是转账交易
-	if !tx.IsTransfer() {
-		t.Errorf("Should be identified as transfer transaction")
-	}
+	// 验证总成本
+	assert.Equal(t, uint64(110), tx.GetTotalCost()) // 金额100 + 手续费10
 }

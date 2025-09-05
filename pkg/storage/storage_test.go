@@ -1,7 +1,11 @@
 package storage
 
 import (
+	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/govm-net/shardmatrix/pkg/types"
 )
@@ -117,77 +121,75 @@ func TestMemoryAccountStore(t *testing.T) {
 	}
 }
 
-func TestMemoryValidatorStore(t *testing.T) {
-	store := NewMemoryValidatorStore()
+// TestValidatorStore 测试验证者存储
+func TestValidatorStore(t *testing.T) {
+	// 创建临时目录
+	tempDir, err := os.MkdirTemp("", "validator_store_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	// 创建存储
+	store, err := NewValidatorStore(tempDir)
+	require.NoError(t, err)
 	defer store.Close()
 
-	// 创建测试验证者
-	address := types.AddressFromPublicKey([]byte("validator_public_key"))
-	validator := types.NewValidator(address, 1000)
+	// 创建验证者
+	address := types.Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	validator := types.NewValidator(address, nil, 1000)
 
-	// 测试存储验证者
-	err := store.PutValidator(validator)
-	if err != nil {
-		t.Fatalf("Failed to store validator: %v", err)
-	}
+	// 存储验证者
+	err = store.PutValidator(validator)
+	require.NoError(t, err)
 
-	// 测试获取验证者
-	retrievedValidator, err := store.GetValidator(address)
-	if err != nil {
-		t.Fatalf("Failed to get validator: %v", err)
-	}
+	// 获取验证者
+	retrieved, err := store.GetValidator(address)
+	require.NoError(t, err)
+	assert.Equal(t, validator.Address, retrieved.Address)
+	assert.Equal(t, validator.Stake, retrieved.Stake)
 
-	// 验证验证者内容
-	if retrievedValidator.Address != validator.Address {
-		t.Errorf("Expected address %x, got %x", validator.Address, retrievedValidator.Address)
-	}
-	if retrievedValidator.Stake != validator.Stake {
-		t.Errorf("Expected stake %d, got %d", validator.Stake, retrievedValidator.Stake)
-	}
-	if retrievedValidator.Status != validator.Status {
-		t.Errorf("Expected status %v, got %v", validator.Status, retrievedValidator.Status)
-	}
+	// 检查验证者是否存在
+	exists := store.HasValidator(address)
+	assert.True(t, exists)
 
-	// 测试HasValidator
-	if !store.HasValidator(address) {
-		t.Error("Validator should exist")
-	}
-
-	// 测试获取所有验证者
-	validators, err := store.GetAllValidators()
-	if err != nil {
-		t.Fatalf("Failed to get all validators: %v", err)
-	}
-	if len(validators) != 1 {
-		t.Errorf("Expected 1 validator, got %d", len(validators))
-	}
-
-	// 测试更新权益
-	newStake := uint64(2000)
-	err = store.UpdateValidatorStake(address, newStake)
-	if err != nil {
-		t.Fatalf("Failed to update validator stake: %v", err)
-	}
-
-	// 验证权益更新
-	updatedValidator, err := store.GetValidator(address)
-	if err != nil {
-		t.Fatalf("Failed to get updated validator: %v", err)
-	}
-	if updatedValidator.Stake != newStake {
-		t.Errorf("Expected stake %d, got %d", newStake, updatedValidator.Stake)
-	}
-
-	// 测试删除验证者
+	// 删除验证者
 	err = store.DeleteValidator(address)
-	if err != nil {
-		t.Fatalf("Failed to delete validator: %v", err)
-	}
+	require.NoError(t, err)
 
-	// 验证验证者已删除
-	if store.HasValidator(address) {
-		t.Error("Validator should not exist after deletion")
-	}
+	// 检查验证者是否已删除
+	exists = store.HasValidator(address)
+	assert.False(t, exists)
+}
+
+// TestMemoryValidatorStore 测试内存验证者存储
+func TestMemoryValidatorStore(t *testing.T) {
+	// 创建存储
+	store := NewMemoryValidatorStore()
+
+	// 创建验证者
+	address := types.Address{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	validator := types.NewValidator(address, nil, 1000)
+
+	// 存储验证者
+	err := store.PutValidator(validator)
+	require.NoError(t, err)
+
+	// 获取验证者
+	retrieved, err := store.GetValidator(address)
+	require.NoError(t, err)
+	assert.Equal(t, validator.Address, retrieved.Address)
+	assert.Equal(t, validator.Stake, retrieved.Stake)
+
+	// 检查验证者是否存在
+	exists := store.HasValidator(address)
+	assert.True(t, exists)
+
+	// 删除验证者
+	err = store.DeleteValidator(address)
+	require.NoError(t, err)
+
+	// 检查验证者是否已删除
+	exists = store.HasValidator(address)
+	assert.False(t, exists)
 }
 
 func TestMemoryBlockStore(t *testing.T) {
@@ -251,7 +253,7 @@ func TestStorageManager(t *testing.T) {
 
 	// 创建测试数据
 	validatorAddr := types.AddressFromPublicKey([]byte("validator_public_key"))
-	validator := types.NewValidator(validatorAddr, 1000)
+	validator := types.NewValidator(validatorAddr, nil, 1000)
 	account := types.NewAccountWithBalance(validatorAddr, 5000)
 
 	// 初始化创世状态

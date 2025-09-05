@@ -31,7 +31,7 @@ func main() {
 
 	// 创建测试数据
 	validatorAddr := types.AddressFromPublicKey([]byte("example_validator"))
-	validator := types.NewValidator(validatorAddr, 1000)
+	validator := types.NewValidator(validatorAddr, []byte("example_public_key"), 1000)
 	account := types.NewAccountWithBalance(validatorAddr, 5000)
 
 	// 初始化创世状态
