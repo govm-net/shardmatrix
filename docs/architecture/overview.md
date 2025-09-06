@@ -4,7 +4,10 @@
 
 ShardMatrix 是一个高性能的分片区块链平台，专注于可扩展性和效率。采用简化的 DPoS 共识机制，支持稳定的交易处理。
 
-**注意**: 项目采用迭代开发策略，第一阶段专注于实现基础区块链功能和分片机制，后续阶段将逐步添加高级特性。
+**注意**: 项目采用迭代开发策略，按阶段实现功能：
+- 第一阶段：实现单分片区块链基础功能
+- 第二阶段：集成智能合约功能
+- 第三阶段：实现分片机制和跨分片交易
 
 ## 核心特性
 
@@ -26,6 +29,54 @@ ShardMatrix 是一个高性能的分片区块链平台，专注于可扩展性�
 
 ## 系统架构
 
+### 第一阶段架构（单分片区块链）
+``mermaid
+graph TB
+    subgraph "应用层"
+        A[客户端应用]
+        B[钱包应用]
+        C[RPC API接口]
+    end
+    
+    subgraph "网络层"
+        H[P2P网络]
+        I[节点发现]
+        J[消息传播]
+    end
+    
+    subgraph "共识层"
+        L[DPoS共识]
+        M[验证者管理]
+        N[区块生产]
+    end
+    
+    subgraph "核心层"
+        P[区块管理]
+        Q[交易处理]
+        R[状态管理]
+    end
+    
+    subgraph "存储层"
+        T[LevelDB]
+        V[索引存储]
+    end
+    
+    A --> C
+    B --> C
+    C --> P
+    H --> I
+    I --> J
+    J --> L
+    L --> M
+    M --> N
+    N --> P
+    P --> Q
+    Q --> R
+    R --> T
+    T --> V
+```
+
+### 第三阶段架构（分片区块链）
 ``mermaid
 graph TB
     subgraph "应用层"
@@ -95,8 +146,8 @@ type BlockHeader struct {
     StateRoot      Hash        // 状态Merkle根
     Validator      Address     // 验证者地址
     Signature      []byte      // 验证者签名
-    ShardID        uint64      // 当前分片ID
-    AdjacentHashes [3]Hash     // 相邻分片的区块头哈希数组[父分片, 左子分片, 右子分片]
+    ShardID        uint64      // 当前分片ID（第一阶段为固定值）
+    AdjacentHashes [3]Hash     // 相邻分片的区块头哈希数组[父分片, 左子分片, 右子分片]（第一阶段为空）
 }
 
 type Block struct {
@@ -153,7 +204,7 @@ type Transaction struct {
     Nonce     uint64    // 防止重放攻击
     Data      []byte    // 交易数据
     Signature []byte    // 签名
-    ShardID   uint64    // 分片ID（可选，用于跨分片交易）
+    ShardID   uint64    // 分片ID（第一阶段为固定值，用于跨分片交易）
 }
 ```
 
@@ -166,6 +217,29 @@ type Transaction struct {
 
 ## 数据流
 
+### 第一阶段数据流（单分片）
+``mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Node as 节点
+    participant Consensus as 共识层
+    participant Storage as 存储层
+    
+    Client->>Node: 提交交易
+    Node->>Node: 验证交易格式
+    Node->>Node: 检查Nonce和余额
+    Node->>Node: 加入交易池
+    
+    Note over Consensus: 每2秒生成新区块
+    Consensus->>Consensus: 选择验证者
+    Consensus->>Node: 创建新区块
+    Node->>Consensus: 广播区块
+    Consensus->>Storage: 存储区块
+    Storage->>Node: 更新状态
+    Node->>Client: 返回确认结果
+```
+
+### 第三阶段数据流（分片）
 ``mermaid
 sequenceDiagram
     participant Client as 客户端
@@ -197,6 +271,39 @@ sequenceDiagram
 
 ## 网络拓扑
 
+### 第一阶段网络拓扑（单分片）
+``mermaid
+graph LR
+    subgraph "验证节点集群"
+        V1[验证节点1]
+        V2[验证节点2]
+        V3[验证节点3]
+        V21[...验证节点21]
+    end
+    
+    subgraph "全节点网络"
+        N1[全节点1]
+        N2[全节点2]
+        N3[全节点3]
+        N4[全节点4]
+    end
+    
+    V1 --- V2
+    V2 --- V3
+    V3 --- V21
+    V21 --- V1
+    
+    V1 --- N1
+    V2 --- N2
+    V3 --- N3
+    
+    N1 --- N2
+    N2 --- N3
+    N3 --- N4
+    N4 --- N1
+```
+
+### 第三阶段网络拓扑（分片）
 ``mermaid
 graph LR
     subgraph "分片1验证节点集群"
@@ -246,7 +353,7 @@ graph LR
 ### 存储结构
 ```
 blocks/          # 区块数据
-├── shard_1/     # 分片1区块
+├── shard_1/     # 分片1区块（第一阶段只有shard_1）
 │   ├── {height} # 按高度存储
 │   └── {hash}   # 按哈希存储
 ├── shard_2/     # 分片2区块
@@ -257,7 +364,7 @@ blocks/          # 区块数据
     └── {hash}   # 按哈希存储
 
 transactions/    # 交易数据
-├── shard_1/     # 分片1交易
+├── shard_1/     # 分片1交易（第一阶段只有shard_1）
 │   ├── {txid}   # 按交易ID存储
 │   └── {block}  # 按区块存储
 ├── shard_2/     # 分片2交易
@@ -268,7 +375,7 @@ transactions/    # 交易数据
     └── {block}  # 按区块存储
 
 accounts/        # 账户状态
-├── shard_1/     # 分片1账户
+├── shard_1/     # 分片1账户（第一阶段只有shard_1）
 │   ├── {address}# 按地址存储
 │   └── balance_index # 余额索引
 ├── shard_2/     # 分片2账户
@@ -279,7 +386,7 @@ accounts/        # 账户状态
     └── balance_index # 余额索引
 
 validators/      # 验证者信息
-├── shard_1/     # 分片1验证者
+├── shard_1/     # 分片1验证者（第一阶段只有shard_1）
 │   ├── validators# 验证者列表
 │   ├── stakes   # 权益信息
 │   └── delegators# 委托人信息
@@ -293,7 +400,7 @@ validators/      # 验证者信息
     └── delegators# 委托人信息
 
 indexes/         # 索引数据
-├── shard_1/     # 分片1索引
+├── shard_1/     # 分片1索引（第一阶段只有shard_1）
 │   ├── tx_index # 交易索引
 │   └── block_index# 区块索引
 ├── shard_2/     # 分片2索引
@@ -339,6 +446,32 @@ ShardMatrix 的创世区块设计遵循以下原则：
    - 公示期过后，所有相关参数被确认
    - 系统根据确认的参数生成指定分片的创世区块
    - 创世区块包含初始状态、验证者列表等必要信息
+
+## 智能合约支持（第二阶段）
+
+### 虚拟机设计
+ShardMatrix 将集成轻量级的智能合约虚拟机，支持可编程的区块链应用：
+1. **合约部署**: 支持智能合约的部署和存储
+2. **合约执行**: 支持合约的调用和执行
+3. **状态管理**: 支持合约状态的持久化存储
+4. **Gas机制**: 实现Gas机制以防止滥用
+
+### 合约交互
+``mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Node as 节点
+    participant VM as 虚拟机
+    participant Storage as 存储层
+    
+    Client->>Node: 部署/调用合约
+    Node->>Node: 验证合约交易
+    Node->>VM: 执行合约代码
+    VM->>Storage: 读取/写入状态
+    Storage->>VM: 返回状态数据
+    VM->>Node: 返回执行结果
+    Node->>Client: 返回合约执行结果
+```
 
 ## 分片间交互机制
 
@@ -411,7 +544,19 @@ ShardMatrix 设计了完善的恶意行为检测与惩罚机制：
 
 ## API接口设计
 
-### 跨分片数据查询
+### 基础API接口（第一阶段）
+ShardMatrix 提供了基础的API接口：
+1. **区块查询接口**: 查询区块信息
+2. **交易查询接口**: 查询交易信息
+3. **账户查询接口**: 查询账户余额和状态
+4. **网络状态接口**: 查询网络和节点状态
+
+### 智能合约API接口（第二阶段）
+1. **合约部署接口**: 部署智能合约
+2. **合约调用接口**: 调用智能合约方法
+3. **合约查询接口**: 查询合约状态
+
+### 跨分片数据查询（第三阶段）
 ShardMatrix 提供了专门的API接口用于跨分片数据查询：
 1. **查询机制**: 通过API，使用对应的区块hash，查询跨链交易
 2. **接口设计**: 

@@ -4,7 +4,10 @@
 
 本文档详细描述了 ShardMatrix 分片区块链平台的核心数据结构设计，包括区块、交易、存储等关键组件。
 
-**注意**: 第一阶段专注于基础功能实现，数据结构设计尽量简化以确保稳定性。
+按阶段实现数据结构设计：
+- 第一阶段：实现单分片区块链基础数据结构
+- 第二阶段：扩展数据结构以支持智能合约
+- 第三阶段：完善数据结构以支持分片机制
 
 ## 基础类型定义
 
@@ -95,8 +98,8 @@ func AddressFromString(s string) (Address, error) {
 ### GenesisConfig 创世配置
 ```go
 type GenesisConfig struct {
-    ShardID           uint64      `json:"shard_id"`           // 分片ID
-    Timestamp         int64       `json:"timestamp"`          // 创世时间戳（第一个分片基于配置，其他分片基于公示期结束时间）
+    ShardID           uint64      `json:"shard_id"`           // 分片ID（第一阶段为固定值1）
+    Timestamp         int64       `json:"timestamp"`          // 创世时间戳
     InitialValidators []Validator `json:"initial_validators"` // 初始验证者列表
     InitialAccounts   []Account   `json:"initial_accounts"`   // 初始账户
     BlockInterval     uint64      `json:"block_interval"`     // 区块间隔（秒）
@@ -108,27 +111,6 @@ type GenesisBlock struct {
     Header       *BlockHeader `json:"header"`
     Transactions []Hash       `json:"transactions"` // 创世交易哈希列表
 }
-```
-
-### ShardCreationTransaction 分片创建交易
-```go
-type ShardCreationTransaction struct {
-    Creator       Address       `json:"creator"`        // 创建者地址
-    NewShardID    uint64        `json:"new_shard_id"`   // 新分片ID
-    Config        GenesisConfig `json:"config"`         // 新分片配置
-    Deposit       uint64        `json:"deposit"`        // 创建押金
-    Nonce         uint64        `json:"nonce"`          // 防重放攻击
-    Signature     []byte        `json:"signature"`      // 签名
-}
-
-// 分片创建状态
-type ShardCreationStatus string
-
-const (
-    ShardCreationPending   ShardCreationStatus = "pending"     // 等待确认
-    ShardCreationApproved  ShardCreationStatus = "approved"    // 已批准
-    ShardCreationActive    ShardCreationStatus = "active"      // 已激活
-)
 ```
 
 ## 区块结构
@@ -144,8 +126,8 @@ type BlockHeader struct {
     StateRoot      Hash        // 状态Merkle根
     Validator      Address     // 验证者地址
     Signature      []byte      // 验证者签名（创世区块为空）
-    ShardID        uint64      // 当前分片ID
-    AdjacentHashes [3]Hash     // 相邻分片的区块头哈希数组[父分片, 左子分片, 右子分片]
+    ShardID        uint64      // 当前分片ID（第一阶段为固定值，第三阶段为实际分片ID）
+    AdjacentHashes [3]Hash     // 相邻分片的区块头哈希数组[父分片, 左子分片, 右子分片]（第一阶段为空）
 }
 ```
 
@@ -157,8 +139,8 @@ type BlockHeader struct {
 - `StateRoot`: 状态Merkle根，用于验证状态完整性
 - `Validator`: 创建该区块的验证者地址
 - `Signature`: 验证者对区块的签名（创世区块为空）
-- `ShardID`: 当前分片的ID
-- `AdjacentHashes`: 相邻分片的区块头哈希数组，用于分片间链接
+- `ShardID`: 当前分片的ID（第一阶段为固定值，第三阶段为实际分片ID）
+- `AdjacentHashes`: 相邻分片的区块头哈希数组，用于分片间链接（第一阶段为空，第三阶段使用）
 
 ### Block 区块
 
@@ -181,7 +163,7 @@ type Block struct {
 
 ```go
 type Transaction struct {
-    ShardID   uint64  `json:"shard_id"`  // 分片ID
+    ShardID   uint64  `json:"shard_id"`  // 分片ID（第一阶段为固定值，第二阶段用于合约交易，第三阶段用于跨分片交易）
     From      Address `json:"from"`      // 发送方地址
     To        Address `json:"to"`        // 接收方地址
     Amount    uint64  `json:"amount"`    // 转账金额
@@ -200,19 +182,39 @@ type Transaction struct {
 - `GasPrice`: Gas价格，用于计算交易费用
 - `GasLimit`: Gas限制，交易愿意消耗的最大Gas数量
 - `Nonce`: 发送方的交易序号，防止重放攻击
-- `Data`: 交易数据（可以是转账金额等）
+- `Data`: 交易数据（可以是转账金额、合约调用数据等）
 - `Signature`: 发送方对交易的数字签名
-- `ShardID`: 交易所属的分片ID
+- `ShardID`: 交易所属的分片ID（第一阶段为固定值，第二阶段用于合约交易，第三阶段用于跨分片交易）
 
 **设计特点**:
 - 简化的交易模型，易于理解和实现
 - 支持多种交易类型（通过Data字段扩展）
 - 包含基本的验证机制
 - 第一阶段主要支持基础转账功能
-- 添加了分片ID字段，用于标识交易所属的分片
-- 使用Gas机制替代固定费用，提供更灵活的费用模型
+- 第二阶段支持智能合约调用
+- 第三阶段支持跨分片交易
+- 使用Gas机制提供灵活的费用模型
 
-### CrossShardTransaction 跨分片交易
+### ContractTransaction 合约交易（第二阶段）
+```go
+// 合约交易预编译地址
+const (
+    ContractPrecompileAddress = "0x0000000000000000000000000000000000000002"
+)
+
+// 合约交易结构将由第三方虚拟机定义
+// 此处仅定义接口用于与第三方虚拟机交互
+type ContractTransactionInterface interface {
+    GetContractAddress() Address
+    GetMethod() string
+    GetArgs() []byte
+    GetValue() uint64
+    GetGasPrice() uint64
+    GetGasLimit() uint64
+}
+```
+
+### CrossShardTransaction 跨分片交易（第三阶段）
 
 ```go
 // 跨分片交易预编译地址
@@ -253,6 +255,23 @@ type Account struct {
     Balance   uint64  `json:"balance"`   // 账户余额
     Nonce     uint64  `json:"nonce"`     // 交易计数器
     UpdatedAt int64   `json:"updated_at"` // 最后更新时间
+    CodeHash  Hash    `json:"code_hash,omitempty"` // 合约代码哈希（第二阶段，由第三方虚拟机管理）
+    StorageRoot Hash  `json:"storage_root,omitempty"` // 合约存储根（第二阶段，由第三方虚拟机管理）
+}
+```
+
+### Contract 合约结构（第二阶段）
+```go
+// 合约结构将由第三方虚拟机定义和管理
+// 此处仅定义接口用于与第三方虚拟机交互
+type ContractInterface interface {
+    GetAddress() Address
+    GetCode() []byte
+    GetState(key string) ([]byte, error)
+    SetState(key string, value []byte) error
+    GetBalance() uint64
+    GetCreator() Address
+    GetCreatedAt() uint64
 }
 ```
 
@@ -304,11 +323,21 @@ type TransactionStore interface {
     HasTransaction(txHash []byte) bool
     DeleteTransaction(txHash []byte) error
     GetTransactionsByBlock(blockHash []byte) ([]*Transaction, error)
-    PutShardCreationTransaction(tx *ShardCreationTransaction) error
-    GetShardCreationTransaction(txHash []byte) (*ShardCreationTransaction, error)
 }
 
-// 跨分片交易存储接口
+// 合约存储接口（第二阶段）
+// 注意：合约存储将由第三方虚拟机管理，此处仅定义接口用于与第三方虚拟机交互
+type ContractStoreInterface interface {
+    PutContract(contract ContractInterface) error
+    GetContract(address Address) (ContractInterface, error)
+    HasContract(address Address) bool
+    DeleteContract(address Address) error
+    GetContractCode(address Address) ([]byte, error)
+    PutContractState(address Address, key string, value []byte) error
+    GetContractState(address Address, key string) ([]byte, error)
+}
+
+// 跨分片交易存储接口（第三阶段）
 type CrossShardTransactionStore interface {
     PutCrossShardTransaction(tx *CrossShardTransaction) error
     GetCrossShardTransaction(txHash []byte) (*CrossShardTransaction, error)
@@ -382,10 +411,17 @@ Value: 序列化的创世区块数据
 Key: "tx:{交易哈希}"
 Value: 序列化的交易数据
 
-Key: "shard_creation_tx:{交易哈希}"
-Value: 序列化的分片创建交易数据
+// 合约存储（第二阶段）
+Key: "contract:{合约地址}"
+Value: 序列化的合约数据
 
-// 跨分片交易存储
+Key: "contract_code:{合约地址}"
+Value: 合约代码
+
+Key: "contract_state:{合约地址}:{状态键}"
+Value: 状态值
+
+// 跨分片交易存储（第三阶段）
 Key: "cross_shard_tx:{交易哈希}"
 Value: 序列化的跨分片交易数据
 
@@ -411,8 +447,9 @@ Key: "malicious_type:{行为类型}:{时间戳}"
 Value: 序列化的恶意行为数据
 ```
 
-## 数据流程（第一阶段）
+## 数据流程
 
+### 第一阶段数据流程（单分片）
 ```mermaid
 graph TD
     A[用户创建交易] --> B[交易验证]
@@ -425,27 +462,73 @@ graph TD
     H --> I[交易存储]
     I --> J[状态更新]
     
-    J --> K{是否为跨分片交易}
-    K -->|是| L[存储跨分片交易记录]
-    K -->|否| M[正常处理]
-    L --> N[标记目标分片]
-    
-    O[分片创建交易] --> P[验证分片配置]
-    P --> Q[进入公示期]
-    Q --> R[公示期结束]
-    R --> S[创建新分片创世区块]
-    
     T[恶意行为检测] --> U[记录恶意行为]
     U --> V[实施惩罚]
 ```
 
-## 设计原则（第一阶段）
+### 第二阶段数据流程（智能合约）
+```mermaid
+graph TD
+    A[用户创建交易] --> B[交易验证]
+    B --> C[交易池]
+    C --> D{是否为合约交易}
+    D -->|是| E[合约执行]
+    D -->|否| F[普通交易处理]
+    E --> G[Gas计费]
+    G --> H[状态更新]
+    F --> I[普通状态更新]
+    H --> J[区块创建]
+    I --> J
+    J --> K[交易哈希添加到区块]
+    K --> L[计算Merkle根]
+    L --> M[区块签名]
+    M --> N[区块存储]
+    N --> O[交易存储]
+    O --> P[合约存储]
+```
+
+### 第三阶段数据流程（分片）
+```mermaid
+graph TD
+    A[用户创建交易] --> B[交易验证]
+    B --> C[交易池]
+    C --> D{交易类型}
+    D -->|普通交易| E[本地处理]
+    D -->|合约交易| F[合约执行]
+    D -->|跨分片交易| G[标记跨分片交易]
+    E --> H[状态更新]
+    F --> I[Gas计费和状态更新]
+    G --> J[存储跨分片交易记录]
+    J --> K[标记目标分片]
+    H --> L[区块创建]
+    I --> L
+    L --> M[交易哈希添加到区块]
+    M --> N[计算Merkle根]
+    N --> O[区块签名]
+    O --> P[区块存储]
+    P --> Q[交易存储]
+    Q --> R[合约存储]
+    R --> S[跨分片交易存储]
+    
+    T[目标分片处理] --> U[获取跨分片交易]
+    U --> V[执行跨分片交易]
+    V --> W{执行结果}
+    W -->|成功| X[更新交易状态为已处理]
+    W -->|失败| Y[更新交易状态为失败]
+    
+    Z[相邻分片同步] --> AA[获取区块头哈希]
+    AA --> AB[更新相邻哈希数组]
+```
+
+## 设计原则
 - **简单优先**: 优先选择简单可靠的实现方案
 - **类型安全**: 使用强类型和枚举
 - **模块化**: 保持良好的模块边界，便于后续扩展
 - **可测试**: 所有核心功能必须有完整测试
+- **阶段清晰**: 每个阶段的数据结构设计目标明确
 
-## 性能与扩展性（第一阶段）
+## 性能与扩展性
 - **基础优化**: 缓存、批量处理
-- **后续扩展**: 跨链支持
+- **阶段扩展**: 每个阶段在前一阶段基础上扩展
 - **向后兼容**: 数据结构版本控制
+- **分片支持**: 第三阶段支持分片数据隔离
