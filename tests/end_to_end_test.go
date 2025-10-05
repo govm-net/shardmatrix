@@ -204,10 +204,10 @@ func TestBlockProductionFlow(t *testing.T) {
 	t.Run("EmptyBlockProduction", func(t *testing.T) {
 		// 重新创建区块链管理器
 		blockchainMgr := blockchain.NewManager(storageInst)
-		
+
 		// 创建交易池
 		txPool := blockchain.NewTransactionPool(1000, 5*time.Minute)
-		
+
 		// 创建区块生产器
 		blockProducer := blockchain.NewBlockProducer(keyPair, storageInst, txPool, blockchainMgr)
 
@@ -229,7 +229,7 @@ func TestBlockProductionFlow(t *testing.T) {
 		if genesisTime%2 != 0 {
 			genesisTime--
 		}
-		
+
 		blockTime := genesisTime + 2
 		blockNumber := uint64(1)
 
@@ -319,12 +319,12 @@ func TestTimeControllerIntegration(t *testing.T) {
 		// 连续测试10个区块的时间验证
 		for i := uint64(1); i <= 10; i++ {
 			expectedTime := genesisTime + int64(i)*2
-			
+
 			// 正确时间应该验证通过
 			if !timeController.ValidateBlockTime(i, expectedTime) {
 				t.Errorf("Block %d: correct time %d should validate", i, expectedTime)
 			}
-			
+
 			// 错误时间应该被拒绝
 			wrongTimes := []int64{
 				expectedTime - 1, // 早1秒
@@ -332,7 +332,7 @@ func TestTimeControllerIntegration(t *testing.T) {
 				expectedTime - 2, // 早2秒
 				expectedTime + 2, // 晚2秒
 			}
-			
+
 			for _, wrongTime := range wrongTimes {
 				if timeController.ValidateBlockTime(i, wrongTime) {
 					t.Errorf("Block %d: wrong time %d should be rejected", i, wrongTime)
@@ -345,42 +345,42 @@ func TestTimeControllerIntegration(t *testing.T) {
 
 	t.Run("CallbackMechanism", func(t *testing.T) {
 		timeController := consensus.NewTimeController(genesisTime)
-		
+
 		// 回调计数器
 		callbackCount := 0
 		receivedBlocks := make(map[uint64]int64)
-		
+
 		// 注册回调
 		callback := func(blockTime int64, blockNumber uint64) {
 			callbackCount++
 			receivedBlocks[blockNumber] = blockTime
 		}
-		
+
 		timeController.RegisterCallback("test", callback)
-		
+
 		// 手动触发几个回调
 		for i := uint64(1); i <= 5; i++ {
 			blockTime := genesisTime + int64(i)*2
 			callback(blockTime, i)
 		}
-		
+
 		// 验证回调执行
 		if callbackCount != 5 {
 			t.Errorf("Expected 5 callback executions, got %d", callbackCount)
 		}
-		
+
 		// 验证回调数据正确性
 		for blockNum, blockTime := range receivedBlocks {
 			expectedTime := genesisTime + int64(blockNum)*2
 			if blockTime != expectedTime {
-				t.Errorf("Block %d: callback received wrong time %d, expected %d", 
+				t.Errorf("Block %d: callback received wrong time %d, expected %d",
 					blockNum, blockTime, expectedTime)
 			}
 		}
-		
+
 		// 取消注册回调
 		timeController.UnregisterCallback("test")
-		
+
 		t.Logf("Callback mechanism test completed: %d callbacks executed", callbackCount)
 	})
 }
@@ -457,27 +457,27 @@ func TestSystemIntegration(t *testing.T) {
 		// 8. 生产连续的区块
 		for i := uint64(1); i <= 5; i++ {
 			blockTime := genesisTime + int64(i)*2
-			
+
 			// 验证时间
 			if !timeController.ValidateBlockTime(i, blockTime) {
 				t.Errorf("Block %d time validation failed", i)
 				continue
 			}
-			
+
 			// 生产区块
 			block, err := blockProducer.ProduceBlock(blockTime, i)
 			if err != nil {
 				t.Errorf("Failed to produce block %d: %v", i, err)
 				continue
 			}
-			
+
 			// 添加区块到区块链
 			err = blockchainMgr.AddBlock(block)
 			if err != nil {
 				t.Errorf("Failed to add block %d to blockchain: %v", i, err)
 				continue
 			}
-			
+
 			t.Logf("Block %d produced and added successfully", i)
 		}
 
@@ -490,7 +490,7 @@ func TestSystemIntegration(t *testing.T) {
 		// 10. 获取统计信息
 		stats := blockchainMgr.GetStats()
 		t.Logf("Final blockchain stats: %+v", stats)
-		
+
 		t.Logf("Complete workflow integration test passed")
 	})
 }
@@ -508,9 +508,37 @@ func TestPerformanceBaseline(t *testing.T) {
 		// 创建组件
 		storageInst, _ := storage.NewLevelDBStorage(tmpDir)
 		defer storageInst.Close()
-		
+
 		keyPair, _ := crypto.GenerateKeyPair()
 		blockchainMgr := blockchain.NewManager(storageInst)
+
+		// 性能测试：生产100个空区块
+		const numBlocks = 100
+		genesisTime := time.Now().Unix()
+		if genesisTime%2 != 0 {
+			genesisTime--
+		}
+
+		// 初始化区块链
+		genesisConfig := &types.GenesisBlock{
+			Timestamp: genesisTime,
+			InitAccounts: []types.Account{
+				{
+					Address: keyPair.Address,
+					Balance: 1000000,
+					Nonce:   0,
+					Staked:  0,
+				},
+			},
+			Validators: []types.Validator{},
+			ChainID:    "test-chain",
+			Config:     map[string]string{},
+		}
+		initErr := blockchainMgr.Initialize(genesisConfig)
+		if initErr != nil {
+			t.Fatalf("Failed to initialize blockchain: %v", initErr)
+		}
+
 		txPool := blockchain.NewTransactionPool(1000, 5*time.Minute)
 		blockProducer := blockchain.NewBlockProducer(keyPair, storageInst, txPool, blockchainMgr)
 
@@ -520,28 +548,28 @@ func TestPerformanceBaseline(t *testing.T) {
 		blockProducer.Start()
 		defer blockProducer.Stop()
 
-		// 性能测试：生产100个空区块
-		const numBlocks = 100
-		genesisTime := time.Now().Unix()
-		if genesisTime%2 != 0 {
-			genesisTime--
-		}
-
 		start := time.Now()
-		
+
 		for i := uint64(1); i <= numBlocks; i++ {
 			blockTime := genesisTime + int64(i)*2
-			_, err := blockProducer.ProduceBlock(blockTime, i)
+			block, err := blockProducer.ProduceBlock(blockTime, i)
 			if err != nil {
 				t.Errorf("Failed to produce block %d: %v", i, err)
+				continue
+			}
+
+			// 保存区块到区块链
+			err = blockchainMgr.AddBlock(block)
+			if err != nil {
+				t.Errorf("Failed to add block %d: %v", i, err)
 			}
 		}
-		
+
 		duration := time.Since(start)
 		avgTime := duration / numBlocks
-		
+
 		t.Logf("Produced %d blocks in %v (avg: %v per block)", numBlocks, duration, avgTime)
-		
+
 		// 性能要求：每个区块生产应该在100ms内完成
 		if avgTime > 100*time.Millisecond {
 			t.Errorf("Block production too slow: %v > 100ms", avgTime)
