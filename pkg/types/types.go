@@ -27,6 +27,16 @@ const (
 	ShardID        = uint64(1)       // 第一阶段固定分片ID
 )
 
+// HealthStatus 健康状态枚举
+type HealthStatus int
+
+const (
+	HealthStatusHealthy HealthStatus = iota // 健康
+	HealthStatusWarning                     // 警告
+	HealthStatusCritical                    // 严重
+	HealthStatusUnknown                     // 未知
+)
+
 // BlockHeader 区块头结构
 type BlockHeader struct {
 	Number         uint64    `binary:"number"`          // 区块高度

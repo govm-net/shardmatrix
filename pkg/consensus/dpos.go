@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/lengzhao/shardmatrix/pkg/crypto"
 	"github.com/lengzhao/shardmatrix/pkg/storage"
@@ -19,6 +20,22 @@ type DPoSConsensus struct {
 	timeController *TimeController
 	isActive       bool
 	keyPair        *crypto.KeyPair
+	// 新增：节点活跃度管理
+	activeThreshold float64                         // 活跃度阈值 (0.6 = 60%)
+	nodeHealthMap   map[types.Address]*NodeHealthInfo // 节点健康信息
+	safetyMode      bool                            // 安全模式标志
+	lastHealthCheck int64                           // 最后健康检查时间
+}
+
+// NodeHealthInfo 节点健康信息
+type NodeHealthInfo struct {
+	LastHeartbeat   int64     // 最后心跳时间
+	LastBlockTime   int64     // 最后出块时间
+	BlocksProduced  uint64    // 生产区块数
+	MissedBlocks    uint64    // 错过区块数
+	NetworkLatency  int64     // 网络延迟(ms)
+	IsResponsive    bool      // 是否响应
+	ActiveScore     float64   // 活跃度评分(0-1)
 }
 
 // NewDPoSConsensus 创建新的DPoS共识引擎
@@ -35,6 +52,11 @@ func NewDPoSConsensus(
 			Validators: make([]types.Validator, 0),
 			Round:      0,
 		},
+		// 初始化活跃度管理
+		activeThreshold: 0.6, // 60%活跃度要求
+		nodeHealthMap:   make(map[types.Address]*NodeHealthInfo),
+		safetyMode:      false,
+		lastHealthCheck: time.Now().Unix(),
 	}
 }
 
@@ -54,6 +76,10 @@ func (dpos *DPoSConsensus) Start() error {
 	}
 	
 	dpos.isActive = true
+	
+	// 启动健康检查循环
+	go dpos.healthCheckLoop()
+	
 	return nil
 }
 
@@ -62,6 +88,10 @@ func (dpos *DPoSConsensus) Stop() {
 	dpos.mu.Lock()
 	defer dpos.mu.Unlock()
 	dpos.isActive = false
+	
+	// 清理节点健康信息
+	dpos.nodeHealthMap = make(map[types.Address]*NodeHealthInfo)
+	dpos.safetyMode = false
 }
 
 // loadValidatorSet 加载验证者集合
@@ -454,4 +484,386 @@ func (dpos *DPoSConsensus) IsActive() bool {
 	dpos.mu.RLock()
 	defer dpos.mu.RUnlock()
 	return dpos.isActive
+}
+
+// =============== 节点活跃度管理方法 ===============
+
+// UpdateNodeHeartbeat 更新节点心跳
+func (dpos *DPoSConsensus) UpdateNodeHeartbeat(address types.Address, latency int64) {
+	dpos.mu.Lock()
+	defer dpos.mu.Unlock()
+
+	health, exists := dpos.nodeHealthMap[address]
+	if !exists {
+		health = &NodeHealthInfo{
+			ActiveScore: 0.5, // 初始评分
+		}
+		dpos.nodeHealthMap[address] = health
+	}
+
+	health.LastHeartbeat = time.Now().Unix()
+	health.NetworkLatency = latency
+	health.IsResponsive = true
+
+	// 更新活跃度评分
+	dpos.updateNodeActiveScore(health)
+}
+
+// UpdateNodeBlockProduction 更新节点出块信息
+func (dpos *DPoSConsensus) UpdateNodeBlockProduction(address types.Address, blockTime int64, produced bool) {
+	dpos.mu.Lock()
+	defer dpos.mu.Unlock()
+
+	health, exists := dpos.nodeHealthMap[address]
+	if !exists {
+		health = &NodeHealthInfo{
+			ActiveScore: 0.5,
+		}
+		dpos.nodeHealthMap[address] = health
+	}
+
+	health.LastBlockTime = blockTime
+	if produced {
+		health.BlocksProduced++
+	} else {
+		health.MissedBlocks++
+	}
+
+	// 更新活跃度评分
+	dpos.updateNodeActiveScore(health)
+}
+
+// updateNodeActiveScore 更新节点活跃度评分
+func (dpos *DPoSConsensus) updateNodeActiveScore(health *NodeHealthInfo) {
+	now := time.Now().Unix()
+	
+	// 心跳评分 (40%权重)
+	heartbeatScore := 1.0
+	if now-health.LastHeartbeat > 30 { // 30秒超时
+		heartbeatScore = 0.0
+	} else if now-health.LastHeartbeat > 15 {
+		heartbeatScore = 0.5
+	}
+
+	// 出块评分 (35%权重)
+	blockScore := 1.0
+	totalBlocks := health.BlocksProduced + health.MissedBlocks
+	if totalBlocks > 0 {
+		blockScore = float64(health.BlocksProduced) / float64(totalBlocks)
+	}
+
+	// 网络延迟评分 (25%权重)
+	latencyScore := 1.0
+	if health.NetworkLatency > 1000 { // 1秒以上
+		latencyScore = 0.0
+	} else if health.NetworkLatency > 500 { // 500ms以上
+		latencyScore = 0.5
+	}
+
+	// 综合评分
+	health.ActiveScore = heartbeatScore*0.4 + blockScore*0.35 + latencyScore*0.25
+	health.IsResponsive = health.ActiveScore >= 0.6
+}
+
+// CheckNodeActivity 检查节点活跃度并更新安全模式
+func (dpos *DPoSConsensus) CheckNodeActivity() {
+	dpos.mu.Lock()
+	defer dpos.mu.Unlock()
+
+	activeCount := 0
+	totalValidators := len(dpos.validatorSet.Validators)
+
+	// 统计活跃验证者数量
+	for _, validator := range dpos.validatorSet.Validators {
+		if !validator.IsActive {
+			continue
+		}
+
+		health, exists := dpos.nodeHealthMap[validator.Address]
+		if exists && health.IsResponsive {
+			activeCount++
+		}
+	}
+
+	// 计算活跃度比例
+	activeRatio := float64(activeCount) / float64(totalValidators)
+
+	// 检查是否需要进入安全模式
+	prevSafetyMode := dpos.safetyMode
+	dpos.safetyMode = activeRatio < dpos.activeThreshold
+
+	// 记录状态变化
+	if prevSafetyMode != dpos.safetyMode {
+		if dpos.safetyMode {
+			fmt.Printf("⚠️  Entering SAFETY MODE: Active validators %d/%d (%.1f%% < %.1f%%)\n", 
+				activeCount, totalValidators, activeRatio*100, dpos.activeThreshold*100)
+		} else {
+			fmt.Printf("✅ Exiting SAFETY MODE: Active validators %d/%d (%.1f%% >= %.1f%%)\n", 
+				activeCount, totalValidators, activeRatio*100, dpos.activeThreshold*100)
+		}
+	}
+
+	dpos.lastHealthCheck = time.Now().Unix()
+}
+
+// IsInSafetyMode 检查是否处于安全模式
+func (dpos *DPoSConsensus) IsInSafetyMode() bool {
+	dpos.mu.RLock()
+	defer dpos.mu.RUnlock()
+	return dpos.safetyMode
+}
+
+// GetActiveValidatorRatio 获取活跃验证者比例
+func (dpos *DPoSConsensus) GetActiveValidatorRatio() float64 {
+	dpos.mu.RLock()
+	defer dpos.mu.RUnlock()
+
+	activeCount := 0
+	totalValidators := len(dpos.validatorSet.Validators)
+
+	for _, validator := range dpos.validatorSet.Validators {
+		if !validator.IsActive {
+			continue
+		}
+
+		health, exists := dpos.nodeHealthMap[validator.Address]
+		if exists && health.IsResponsive {
+			activeCount++
+		}
+	}
+
+	if totalValidators == 0 {
+		return 0.0
+	}
+
+	return float64(activeCount) / float64(totalValidators)
+}
+
+// GetNodeHealthInfo 获取节点健康信息
+func (dpos *DPoSConsensus) GetNodeHealthInfo(address types.Address) *NodeHealthInfo {
+	dpos.mu.RLock()
+	defer dpos.mu.RUnlock()
+
+	if health, exists := dpos.nodeHealthMap[address]; exists {
+		// 返回副本避免并发修改
+		healthCopy := *health
+		return &healthCopy
+	}
+
+	return nil
+}
+
+// GetHealthStats 获取健康统计信息
+func (dpos *DPoSConsensus) GetHealthStats() map[string]interface{} {
+	dpos.mu.RLock()
+	defer dpos.mu.RUnlock()
+
+	activeCount := 0
+	totalCount := len(dpos.validatorSet.Validators)
+	avgScore := 0.0
+
+	for _, validator := range dpos.validatorSet.Validators {
+		if !validator.IsActive {
+			continue
+		}
+
+		health, exists := dpos.nodeHealthMap[validator.Address]
+		if exists {
+			avgScore += health.ActiveScore
+			if health.IsResponsive {
+				activeCount++
+			}
+		}
+	}
+
+	if totalCount > 0 {
+		avgScore /= float64(totalCount)
+	}
+
+	return map[string]interface{}{
+		"active_validators": activeCount,
+		"total_validators":  totalCount,
+		"active_ratio":      float64(activeCount) / float64(totalCount),
+		"threshold":         dpos.activeThreshold,
+		"safety_mode":       dpos.safetyMode,
+		"avg_score":         avgScore,
+		"last_check":        dpos.lastHealthCheck,
+	}
+}
+
+// =============== 健康检查循环与自动管理 ===============
+
+// healthCheckLoop 健康检查循环
+func (dpos *DPoSConsensus) healthCheckLoop() {
+	ticker := time.NewTicker(15 * time.Second) // 每15秒检查一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if !dpos.IsActive() {
+				return
+			}
+			dpos.performHealthCheck()
+		default:
+			if !dpos.IsActive() {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+}
+
+// performHealthCheck 执行健康检查
+func (dpos *DPoSConsensus) performHealthCheck() {
+	// 检查节点活跃度
+	dpos.CheckNodeActivity()
+	
+	// 清理过期的健康信息
+	dpos.cleanupExpiredHealth()
+	
+	// 自动调整验证者状态
+	dpos.autoAdjustValidators()
+}
+
+// cleanupExpiredHealth 清理过期的健康信息
+func (dpos *DPoSConsensus) cleanupExpiredHealth() {
+	dpos.mu.Lock()
+	defer dpos.mu.Unlock()
+
+	now := time.Now().Unix()
+	expireThreshold := int64(300) // 5分钟过期
+
+	for address, health := range dpos.nodeHealthMap {
+		if now-health.LastHeartbeat > expireThreshold {
+			// 清理过期节点
+			delete(dpos.nodeHealthMap, address)
+			fmt.Printf("🗑️ Removed expired node health info: %s\n", address.String())
+		}
+	}
+}
+
+// autoAdjustValidators 自动调整验证者状态
+func (dpos *DPoSConsensus) autoAdjustValidators() {
+	dpos.mu.Lock()
+	defer dpos.mu.Unlock()
+
+	now := time.Now().Unix()
+	inactiveThreshold := int64(120) // 2分钟非活跃阈值
+	recoveryThreshold := int64(60)  // 1分钟恢复阈值
+
+	for i := range dpos.validatorSet.Validators {
+		validator := &dpos.validatorSet.Validators[i]
+		health, exists := dpos.nodeHealthMap[validator.Address]
+		
+		if !exists {
+			continue
+		}
+
+		// 自动停用非活跃验证者
+		if validator.IsActive && !health.IsResponsive {
+			if now-health.LastHeartbeat > inactiveThreshold {
+				validator.IsActive = false
+				err := dpos.storage.SaveValidator(validator)
+				if err == nil {
+					fmt.Printf("⚠️ Auto-deactivated validator: %s (unresponsive for %ds)\n", 
+						validator.Address.String(), now-health.LastHeartbeat)
+				}
+			}
+		}
+
+		// 自动激活恢复的验证者
+		if !validator.IsActive && health.IsResponsive {
+			if now-health.LastHeartbeat <= recoveryThreshold {
+				validator.IsActive = true
+				err := dpos.storage.SaveValidator(validator)
+				if err == nil {
+					fmt.Printf("✅ Auto-activated validator: %s (recovered)\n", 
+						validator.Address.String())
+				}
+			}
+		}
+	}
+
+	// 重新排序验证者
+	dpos.sortValidators()
+}
+
+// =============== 高级共识管理方法 ===============
+
+// GetConsensusMode 获取当前共识模式
+func (dpos *DPoSConsensus) GetConsensusMode() string {
+	dpos.mu.RLock()
+	defer dpos.mu.RUnlock()
+
+	if dpos.safetyMode {
+		return "SAFETY_MODE"
+	}
+
+	activeRatio := dpos.GetActiveValidatorRatio()
+	if activeRatio >= 0.8 {
+		return "NORMAL"
+	} else if activeRatio >= 0.6 {
+		return "DEGRADED"
+	} else {
+		return "CRITICAL"
+	}
+}
+
+// ForceValidatorSync 强制同步验证者集合
+func (dpos *DPoSConsensus) ForceValidatorSync() error {
+	dpos.mu.Lock()
+	defer dpos.mu.Unlock()
+
+	return dpos.loadValidatorSet()
+}
+
+// GetDetailedConsensusInfo 获取详细共识信息
+func (dpos *DPoSConsensus) GetDetailedConsensusInfo() map[string]interface{} {
+	dpos.mu.RLock()
+	defer dpos.mu.RUnlock()
+
+	activeValidators := dpos.getActiveValidators()
+	validatorDetails := make([]map[string]interface{}, 0)
+
+	for _, validator := range dpos.validatorSet.Validators {
+		health := dpos.nodeHealthMap[validator.Address]
+		detail := map[string]interface{}{
+			"address":        validator.Address.String(),
+			"is_active":      validator.IsActive,
+			"stake_amount":   validator.StakeAmount,
+			"delegated_amt":  validator.DelegatedAmt,
+			"vote_power":     validator.VotePower,
+			"slash_count":    validator.SlashCount,
+		}
+
+		if health != nil {
+			detail["last_heartbeat"] = health.LastHeartbeat
+			detail["last_block_time"] = health.LastBlockTime
+			detail["active_score"] = health.ActiveScore
+			detail["is_responsive"] = health.IsResponsive
+			detail["blocks_produced"] = health.BlocksProduced
+			detail["missed_blocks"] = health.MissedBlocks
+			detail["network_latency"] = health.NetworkLatency
+		} else {
+			detail["health_status"] = "NO_DATA"
+		}
+
+		validatorDetails = append(validatorDetails, detail)
+	}
+
+	return map[string]interface{}{
+		"consensus_type":        "DPoS",
+		"is_active":             dpos.isActive,
+		"consensus_mode":        dpos.GetConsensusMode(),
+		"safety_mode":           dpos.safetyMode,
+		"active_threshold":      dpos.activeThreshold,
+		"total_validators":      len(dpos.validatorSet.Validators),
+		"active_validators":     len(activeValidators),
+		"active_ratio":          dpos.GetActiveValidatorRatio(),
+		"current_round":         dpos.validatorSet.Round,
+		"total_vote_power":      dpos.GetTotalVotePower(),
+		"last_health_check":     dpos.lastHealthCheck,
+		"validator_details":     validatorDetails,
+	}
 }

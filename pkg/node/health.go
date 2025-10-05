@@ -4,164 +4,78 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/lengzhao/shardmatrix/pkg/types"
 )
 
-// HealthStatus 健康状态枚举
+// HealthStatus 节点健康状态
 type HealthStatus int
 
 const (
-	HealthStatusHealthy HealthStatus = iota
-	HealthStatusWarning 
-	HealthStatusCritical
-	HealthStatusUnknown
+	HealthStatusActive   HealthStatus = iota // 活跃状态
+	HealthStatusInactive                     // 非活跃状态
+	HealthStatusUnknown                      // 未知状态
 )
 
-func (h HealthStatus) String() string {
-	switch h {
-	case HealthStatusHealthy:
-		return "healthy"
-	case HealthStatusWarning:
-		return "warning"
-	case HealthStatusCritical:
-		return "critical"
-	case HealthStatusUnknown:
-		return "unknown"
-	default:
-		return "unknown"
-	}
+// NodeHealth 节点健康信息
+type NodeHealth struct {
+	Address         types.Address `json:"address"`          // 节点地址
+	LastHeartbeat   int64         `json:"last_heartbeat"`   // 最后心跳时间
+	LastBlockTime   int64         `json:"last_block_time"`  // 最后出块时间
+	ConnectionCount int           `json:"connection_count"` // 连接数
+	Status          HealthStatus  `json:"status"`           // 健康状态
+	BlocksProduced  uint64        `json:"blocks_produced"`  // 生产区块数
+	MissedBlocks    uint64        `json:"missed_blocks"`    // 错过区块数
+	Responsiveness  float64       `json:"responsiveness"`   // 响应度评分(0-1)
 }
 
-// ComponentHealth 组件健康状态
-type ComponentHealth struct {
-	Name           string                 `json:"name"`
-	Status         HealthStatus           `json:"status"`
-	Message        string                 `json:"message"`
-	LastCheck      time.Time              `json:"last_check"`
-	CheckDuration  time.Duration          `json:"check_duration"`
-	ErrorCount     int                    `json:"error_count"`
-	Metrics        map[string]interface{} `json:"metrics"`
-}
-
-// SystemHealth 系统整体健康状态
-type SystemHealth struct {
-	OverallStatus  HealthStatus                   `json:"overall_status"`
-	Components     map[string]*ComponentHealth    `json:"components"`
-	LastUpdate     time.Time                      `json:"last_update"`
-	Uptime         time.Duration                  `json:"uptime"`
-	StartTime      time.Time                      `json:"start_time"`
-	SystemMetrics  map[string]interface{}         `json:"system_metrics"`
-}
-
-// HealthChecker 健康检查器接口
-type HealthChecker interface {
-	CheckHealth() *ComponentHealth
-	GetName() string
-}
-
-// HealthMonitor 健康监控器
+// HealthMonitor 节点健康监控器
 type HealthMonitor struct {
-	mu                sync.RWMutex
-	checkers          map[string]HealthChecker
-	health            *SystemHealth
-	checkInterval     time.Duration
-	criticalThreshold int           // 连续失败多少次变为critical
-	warningThreshold  int           // 连续失败多少次变为warning
-	isRunning         bool
-	stopCh            chan struct{}
-	
-	// 配置参数
-	config HealthConfig
+	mu                 sync.RWMutex
+	nodeHealthMap      map[types.Address]*NodeHealth // 节点健康状态映射
+	heartbeatTimeout   time.Duration                 // 心跳超时时间
+	blockTimeout       time.Duration                 // 出块超时时间
+	minActiveNodes     int                           // 最小活跃节点数(60%要求)
+	totalValidators    int                           // 总验证者数量
+	isRunning          bool
+	stopCh             chan struct{}
+	callbacks          []ActiveNodeChangeCallback
 }
 
-// HealthConfig 健康检查配置
-type HealthConfig struct {
-	CheckInterval      time.Duration `json:"check_interval"`      // 检查间隔
-	CriticalThreshold  int           `json:"critical_threshold"`  // 严重阈值
-	WarningThreshold   int           `json:"warning_threshold"`   // 警告阈值
-	ComponentTimeout   time.Duration `json:"component_timeout"`   // 组件检查超时
-	EnableSystemStats  bool          `json:"enable_system_stats"` // 启用系统统计
-	AlertWebhook       string        `json:"alert_webhook"`       // 告警webhook
-}
-
-// DefaultHealthConfig 默认健康检查配置
-func DefaultHealthConfig() HealthConfig {
-	return HealthConfig{
-		CheckInterval:     time.Second * 30,
-		CriticalThreshold: 3,
-		WarningThreshold:  1,
-		ComponentTimeout:  time.Second * 5,
-		EnableSystemStats: true,
-		AlertWebhook:      "",
-	}
-}
+// ActiveNodeChangeCallback 活跃节点变化回调
+type ActiveNodeChangeCallback func(activeCount int, totalCount int, isAboveThreshold bool)
 
 // NewHealthMonitor 创建健康监控器
-func NewHealthMonitor(config HealthConfig) *HealthMonitor {
+func NewHealthMonitor(totalValidators int) *HealthMonitor {
+	minActiveNodes := int(float64(totalValidators) * 0.6) // 60%活跃度要求
+	if minActiveNodes < 1 {
+		minActiveNodes = 1
+	}
+
 	return &HealthMonitor{
-		checkers:          make(map[string]HealthChecker),
-		checkInterval:     config.CheckInterval,
-		criticalThreshold: config.CriticalThreshold,
-		warningThreshold:  config.WarningThreshold,
-		stopCh:            make(chan struct{}),
-		config:            config,
-		health: &SystemHealth{
-			Components:    make(map[string]*ComponentHealth),
-			StartTime:     time.Now(),
-			SystemMetrics: make(map[string]interface{}),
-		},
+		nodeHealthMap:    make(map[types.Address]*NodeHealth),
+		heartbeatTimeout: 30 * time.Second,  // 30秒心跳超时
+		blockTimeout:     6 * time.Second,   // 3个区块周期超时
+		minActiveNodes:   minActiveNodes,
+		totalValidators:  totalValidators,
+		stopCh:          make(chan struct{}),
+		callbacks:       make([]ActiveNodeChangeCallback, 0),
 	}
-}
-
-// RegisterChecker 注册健康检查器
-func (hm *HealthMonitor) RegisterChecker(checker HealthChecker) {
-	hm.mu.Lock()
-	defer hm.mu.Unlock()
-	
-	name := checker.GetName()
-	hm.checkers[name] = checker
-	
-	// 初始化组件健康状态
-	hm.health.Components[name] = &ComponentHealth{
-		Name:      name,
-		Status:    HealthStatusUnknown,
-		Message:   "Not checked yet",
-		LastCheck: time.Time{},
-		Metrics:   make(map[string]interface{}),
-	}
-}
-
-// UnregisterChecker 取消注册健康检查器
-func (hm *HealthMonitor) UnregisterChecker(name string) {
-	hm.mu.Lock()
-	defer hm.mu.Unlock()
-	
-	delete(hm.checkers, name)
-	delete(hm.health.Components, name)
 }
 
 // Start 启动健康监控
 func (hm *HealthMonitor) Start() error {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
-	
+
 	if hm.isRunning {
 		return fmt.Errorf("health monitor already running")
 	}
-	
+
 	hm.isRunning = true
 	hm.stopCh = make(chan struct{})
-	
-	// 立即执行一次检查
-	go hm.performHealthCheck()
-	
-	// 启动定期检查
-	go hm.healthCheckLoop()
-	
-	// 如果启用系统统计，启动系统指标收集
-	if hm.config.EnableSystemStats {
-		go hm.systemMetricsLoop()
-	}
-	
+
+	go hm.monitorLoop()
 	return nil
 }
 
@@ -169,429 +83,294 @@ func (hm *HealthMonitor) Start() error {
 func (hm *HealthMonitor) Stop() {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
-	
+
 	if !hm.isRunning {
 		return
 	}
-	
+
 	hm.isRunning = false
 	close(hm.stopCh)
 }
 
-// healthCheckLoop 健康检查循环
-func (hm *HealthMonitor) healthCheckLoop() {
-	ticker := time.NewTicker(hm.checkInterval)
-	defer ticker.Stop()
-	
-	for {
-		select {
-		case <-hm.stopCh:
-			return
-		case <-ticker.C:
-			hm.performHealthCheck()
+// RegisterNode 注册节点
+func (hm *HealthMonitor) RegisterNode(address types.Address) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	if _, exists := hm.nodeHealthMap[address]; !exists {
+		hm.nodeHealthMap[address] = &NodeHealth{
+			Address:         address,
+			LastHeartbeat:   time.Now().Unix(),
+			LastBlockTime:   0,
+			ConnectionCount: 0,
+			Status:          HealthStatusUnknown,
+			BlocksProduced:  0,
+			MissedBlocks:    0,
+			Responsiveness:  0.5, // 初始评分
 		}
 	}
 }
 
-// performHealthCheck 执行健康检查
-func (hm *HealthMonitor) performHealthCheck() {
-	hm.mu.RLock()
-	checkers := make(map[string]HealthChecker)
-	for name, checker := range hm.checkers {
-		checkers[name] = checker
-	}
-	hm.mu.RUnlock()
-	
-	// 并发检查所有组件
-	results := make(chan *ComponentHealth, len(checkers))
-	
-	for name, checker := range checkers {
-		go func(n string, c HealthChecker) {
-			health := hm.checkComponent(c)
-			results <- health
-		}(name, checker)
-	}
-	
-	// 收集结果
-	healthyCount := 0
-	warningCount := 0
-	criticalCount := 0
-	
-	for i := 0; i < len(checkers); i++ {
-		health := <-results
-		
-		hm.mu.Lock()
-		hm.health.Components[health.Name] = health
-		hm.mu.Unlock()
-		
-		switch health.Status {
-		case HealthStatusHealthy:
-			healthyCount++
-		case HealthStatusWarning:
-			warningCount++
-		case HealthStatusCritical:
-			criticalCount++
-		}
-	}
-	
-	// 更新整体状态
+// UpdateHeartbeat 更新节点心跳
+func (hm *HealthMonitor) UpdateHeartbeat(address types.Address, connections int) {
 	hm.mu.Lock()
-	hm.health.LastUpdate = time.Now()
-	hm.health.Uptime = time.Since(hm.health.StartTime)
-	
-	// 计算整体健康状态
-	if criticalCount > 0 {
-		hm.health.OverallStatus = HealthStatusCritical
-	} else if warningCount > 0 {
-		hm.health.OverallStatus = HealthStatusWarning
-	} else if healthyCount > 0 {
-		hm.health.OverallStatus = HealthStatusHealthy
+	defer hm.mu.Unlock()
+
+	health, exists := hm.nodeHealthMap[address]
+	if !exists {
+		hm.RegisterNode(address)
+		health = hm.nodeHealthMap[address]
+	}
+
+	now := time.Now().Unix()
+	health.LastHeartbeat = now
+	health.ConnectionCount = connections
+
+	// 更新响应度评分
+	hm.updateResponsiveness(health)
+}
+
+// UpdateBlockProduction 更新节点出块信息
+func (hm *HealthMonitor) UpdateBlockProduction(address types.Address, blockTime int64, produced bool) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+
+	health, exists := hm.nodeHealthMap[address]
+	if !exists {
+		hm.RegisterNode(address)
+		health = hm.nodeHealthMap[address]
+	}
+
+	health.LastBlockTime = blockTime
+	if produced {
+		health.BlocksProduced++
 	} else {
-		hm.health.OverallStatus = HealthStatusUnknown
+		health.MissedBlocks++
 	}
-	hm.mu.Unlock()
-	
-	// 如果配置了告警webhook，检查是否需要发送告警
-	if hm.config.AlertWebhook != "" && (criticalCount > 0 || warningCount > 0) {
-		go hm.sendAlert()
-	}
+
+	// 更新响应度评分
+	hm.updateResponsiveness(health)
 }
 
-// checkComponent 检查单个组件
-func (hm *HealthMonitor) checkComponent(checker HealthChecker) *ComponentHealth {
-	start := time.Now()
+// updateResponsiveness 更新节点响应度评分
+func (hm *HealthMonitor) updateResponsiveness(health *NodeHealth) {
+	now := time.Now().Unix()
 	
-	// 使用超时控制
-	done := make(chan *ComponentHealth, 1)
-	go func() {
-		health := checker.CheckHealth()
-		done <- health
-	}()
-	
-	select {
-	case health := <-done:
-		health.CheckDuration = time.Since(start)
-		health.LastCheck = time.Now()
-		
-		// 根据检查结果调整错误计数
-		hm.mu.RLock()
-		if existing, exists := hm.health.Components[health.Name]; exists {
-			if health.Status == HealthStatusHealthy {
-				health.ErrorCount = 0 // 重置错误计数
-			} else {
-				health.ErrorCount = existing.ErrorCount + 1
-			}
-			
-			// 根据错误计数调整状态
-			if health.ErrorCount >= hm.criticalThreshold {
-				health.Status = HealthStatusCritical
-			} else if health.ErrorCount >= hm.warningThreshold {
-				health.Status = HealthStatusWarning
-			}
-		}
-		hm.mu.RUnlock()
-		
-		return health
-		
-	case <-time.After(hm.config.ComponentTimeout):
-		// 超时处理
-		return &ComponentHealth{
-			Name:          checker.GetName(),
-			Status:        HealthStatusCritical,
-			Message:       "Health check timeout",
-			LastCheck:     time.Now(),
-			CheckDuration: hm.config.ComponentTimeout,
-			ErrorCount:    1,
-			Metrics:       make(map[string]interface{}),
-		}
+	// 心跳响应度 (40%权重)
+	heartbeatScore := 1.0
+	if now-health.LastHeartbeat > int64(hm.heartbeatTimeout.Seconds()) {
+		heartbeatScore = 0.0
+	} else if now-health.LastHeartbeat > int64(hm.heartbeatTimeout.Seconds()/2) {
+		heartbeatScore = 0.5
 	}
+
+	// 出块响应度 (35%权重)
+	blockScore := 1.0
+	if health.LastBlockTime > 0 && now-health.LastBlockTime > int64(hm.blockTimeout.Seconds()) {
+		blockScore = 0.0
+	}
+
+	// 区块生产率 (25%权重)
+	productionScore := 1.0
+	totalBlocks := health.BlocksProduced + health.MissedBlocks
+	if totalBlocks > 0 {
+		productionScore = float64(health.BlocksProduced) / float64(totalBlocks)
+	}
+
+	// 综合评分
+	health.Responsiveness = heartbeatScore*0.4 + blockScore*0.35 + productionScore*0.25
 }
 
-// systemMetricsLoop 系统指标收集循环
-func (hm *HealthMonitor) systemMetricsLoop() {
-	ticker := time.NewTicker(time.Minute) // 每分钟收集一次系统指标
+// monitorLoop 监控循环
+func (hm *HealthMonitor) monitorLoop() {
+	ticker := time.NewTicker(10 * time.Second) // 每10秒检查一次
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-hm.stopCh:
 			return
 		case <-ticker.C:
-			hm.collectSystemMetrics()
+			hm.checkNodeHealth()
 		}
 	}
 }
 
-// collectSystemMetrics 收集系统指标
-func (hm *HealthMonitor) collectSystemMetrics() {
-	metrics := make(map[string]interface{})
-	
-	// 这里可以收集各种系统指标
-	// 简化实现，添加一些基本指标
-	metrics["timestamp"] = time.Now().Unix()
-	metrics["uptime_seconds"] = time.Since(hm.health.StartTime).Seconds()
-	metrics["goroutines"] = "runtime.NumGoroutine() would go here"
-	metrics["memory_alloc"] = "memory stats would go here"
-	
+// checkNodeHealth 检查所有节点健康状态
+func (hm *HealthMonitor) checkNodeHealth() {
 	hm.mu.Lock()
-	hm.health.SystemMetrics = metrics
-	hm.mu.Unlock()
-}
+	defer hm.mu.Unlock()
 
-// sendAlert 发送告警
-func (hm *HealthMonitor) sendAlert() {
-	// 简化实现：打印告警信息
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
-	
-	fmt.Printf("HEALTH ALERT: System status is %s\n", hm.health.OverallStatus.String())
-	for name, component := range hm.health.Components {
-		if component.Status != HealthStatusHealthy {
-			fmt.Printf("  - %s: %s (%s)\n", name, component.Status.String(), component.Message)
+	now := time.Now().Unix()
+	activeCount := 0
+	totalCount := len(hm.nodeHealthMap)
+
+	for _, health := range hm.nodeHealthMap {
+		oldStatus := health.Status
+
+		// 更新健康状态
+		if hm.isNodeActive(health, now) {
+			health.Status = HealthStatusActive
+			activeCount++
+		} else {
+			health.Status = HealthStatusInactive
+		}
+
+		// 如果状态发生变化，记录日志
+		if oldStatus != health.Status {
+			fmt.Printf("Node %s status changed: %v -> %v (responsiveness: %.2f)\n", 
+				health.Address.String(), oldStatus, health.Status, health.Responsiveness)
 		}
 	}
+
+	// 检查是否满足60%活跃度要求
+	isAboveThreshold := activeCount >= hm.minActiveNodes
+
+	// 触发回调
+	for _, callback := range hm.callbacks {
+		go callback(activeCount, totalCount, isAboveThreshold)
+	}
+
+	// 记录活跃度状态
+	if !isAboveThreshold {
+		fmt.Printf("⚠️  Active nodes below threshold: %d/%d (required: %d)\n", 
+			activeCount, totalCount, hm.minActiveNodes)
+	}
 }
 
-// GetHealth 获取当前健康状态
-func (hm *HealthMonitor) GetHealth() *SystemHealth {
-	hm.mu.RLock()
-	defer hm.mu.RUnlock()
+// isNodeActive 判断节点是否活跃
+func (hm *HealthMonitor) isNodeActive(health *NodeHealth, currentTime int64) bool {
+	// 多维度活跃度检测
 	
-	// 创建副本以避免竞态条件
-	health := &SystemHealth{
-		OverallStatus: hm.health.OverallStatus,
-		Components:    make(map[string]*ComponentHealth),
-		LastUpdate:    hm.health.LastUpdate,
-		Uptime:        hm.health.Uptime,
-		StartTime:     hm.health.StartTime,
-		SystemMetrics: make(map[string]interface{}),
-	}
+	// 1. 心跳检测
+	heartbeatActive := currentTime-health.LastHeartbeat <= int64(hm.heartbeatTimeout.Seconds())
 	
-	// 复制组件健康状态
-	for name, component := range hm.health.Components {
-		componentCopy := *component
-		health.Components[name] = &componentCopy
-	}
+	// 2. 网络连接检测
+	connectionActive := health.ConnectionCount >= 3 // 至少3个连接
 	
-	// 复制系统指标
-	for k, v := range hm.health.SystemMetrics {
-		health.SystemMetrics[k] = v
-	}
+	// 3. 响应度评分检测
+	responsivenessActive := health.Responsiveness >= 0.6 // 60%以上响应度
 	
-	return health
+	// 综合判断：必须同时满足心跳和响应度要求，连接数作为参考
+	return heartbeatActive && responsivenessActive && connectionActive
 }
 
-// GetComponentHealth 获取特定组件的健康状态
-func (hm *HealthMonitor) GetComponentHealth(name string) *ComponentHealth {
+// GetActiveNodes 获取活跃节点列表
+func (hm *HealthMonitor) GetActiveNodes() []types.Address {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
-	
-	if component, exists := hm.health.Components[name]; exists {
-		componentCopy := *component
-		return &componentCopy
+
+	var activeNodes []types.Address
+	for address, health := range hm.nodeHealthMap {
+		if health.Status == HealthStatusActive {
+			activeNodes = append(activeNodes, address)
+		}
 	}
-	
+
+	return activeNodes
+}
+
+// GetActiveNodeCount 获取活跃节点数量
+func (hm *HealthMonitor) GetActiveNodeCount() int {
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+
+	activeCount := 0
+	for _, health := range hm.nodeHealthMap {
+		if health.Status == HealthStatusActive {
+			activeCount++
+		}
+	}
+
+	return activeCount
+}
+
+// IsAboveThreshold 检查是否达到60%活跃度要求
+func (hm *HealthMonitor) IsAboveThreshold() bool {
+	activeCount := hm.GetActiveNodeCount()
+	return activeCount >= hm.minActiveNodes
+}
+
+// GetNodeHealth 获取指定节点健康信息
+func (hm *HealthMonitor) GetNodeHealth(address types.Address) *NodeHealth {
+	hm.mu.RLock()
+	defer hm.mu.RUnlock()
+
+	if health, exists := hm.nodeHealthMap[address]; exists {
+		// 返回副本以防止并发修改
+		healthCopy := *health
+		return &healthCopy
+	}
+
 	return nil
 }
 
-// IsHealthy 检查系统是否健康
-func (hm *HealthMonitor) IsHealthy() bool {
+// GetAllNodeHealth 获取所有节点健康信息
+func (hm *HealthMonitor) GetAllNodeHealth() map[types.Address]*NodeHealth {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
-	
-	return hm.health.OverallStatus == HealthStatusHealthy
+
+	result := make(map[types.Address]*NodeHealth)
+	for address, health := range hm.nodeHealthMap {
+		healthCopy := *health
+		result[address] = &healthCopy
+	}
+
+	return result
 }
 
-// GetHealthSummary 获取健康状态摘要
-func (hm *HealthMonitor) GetHealthSummary() map[string]interface{} {
+// RegisterCallback 注册活跃节点变化回调
+func (hm *HealthMonitor) RegisterCallback(callback ActiveNodeChangeCallback) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	hm.callbacks = append(hm.callbacks, callback)
+}
+
+// GetHealthStats 获取健康统计信息
+func (hm *HealthMonitor) GetHealthStats() map[string]interface{} {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
-	
-	healthyCount := 0
-	warningCount := 0
-	criticalCount := 0
-	unknownCount := 0
-	
-	for _, component := range hm.health.Components {
-		switch component.Status {
-		case HealthStatusHealthy:
-			healthyCount++
-		case HealthStatusWarning:
-			warningCount++
-		case HealthStatusCritical:
-			criticalCount++
-		case HealthStatusUnknown:
-			unknownCount++
+
+	activeCount := 0
+	totalCount := len(hm.nodeHealthMap)
+	avgResponsiveness := 0.0
+
+	for _, health := range hm.nodeHealthMap {
+		if health.Status == HealthStatusActive {
+			activeCount++
 		}
+		avgResponsiveness += health.Responsiveness
 	}
-	
+
+	if totalCount > 0 {
+		avgResponsiveness /= float64(totalCount)
+	}
+
 	return map[string]interface{}{
-		"overall_status":   hm.health.OverallStatus.String(),
-		"total_components": len(hm.health.Components),
-		"healthy_count":    healthyCount,
-		"warning_count":    warningCount,
-		"critical_count":   criticalCount,
-		"unknown_count":    unknownCount,
-		"last_update":      hm.health.LastUpdate.Unix(),
-		"uptime_seconds":   hm.health.Uptime.Seconds(),
+		"active_nodes":        activeCount,
+		"total_nodes":         totalCount,
+		"active_percentage":   float64(activeCount) / float64(totalCount) * 100,
+		"min_required":        hm.minActiveNodes,
+		"above_threshold":     activeCount >= hm.minActiveNodes,
+		"avg_responsiveness":  avgResponsiveness,
+		"heartbeat_timeout":   hm.heartbeatTimeout.Seconds(),
+		"block_timeout":       hm.blockTimeout.Seconds(),
 	}
 }
 
-// 具体的健康检查器实现
+// SetThresholds 设置监控阈值
+func (hm *HealthMonitor) SetThresholds(heartbeatTimeout, blockTimeout time.Duration) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
 
-// BlockchainHealthChecker 区块链健康检查器
-type BlockchainHealthChecker struct {
-	manager BlockchainManager
+	hm.heartbeatTimeout = heartbeatTimeout
+	hm.blockTimeout = blockTimeout
 }
 
-type BlockchainManager interface {
-	GetCurrentBlock() interface{}
-	GetStats() map[string]interface{}
-}
+// RemoveNode 移除节点监控
+func (hm *HealthMonitor) RemoveNode(address types.Address) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
 
-func NewBlockchainHealthChecker(manager BlockchainManager) *BlockchainHealthChecker {
-	return &BlockchainHealthChecker{manager: manager}
-}
-
-func (bhc *BlockchainHealthChecker) GetName() string {
-	return "blockchain"
-}
-
-func (bhc *BlockchainHealthChecker) CheckHealth() *ComponentHealth {
-	health := &ComponentHealth{
-		Name:    bhc.GetName(),
-		Status:  HealthStatusHealthy,
-		Message: "Blockchain is operating normally",
-		Metrics: make(map[string]interface{}),
-	}
-	
-	// 检查区块链管理器是否可用
-	if bhc.manager == nil {
-		health.Status = HealthStatusCritical
-		health.Message = "Blockchain manager is not available"
-		return health
-	}
-	
-	// 获取当前区块
-	currentBlock := bhc.manager.GetCurrentBlock()
-	if currentBlock == nil {
-		health.Status = HealthStatusWarning
-		health.Message = "No current block available"
-	}
-	
-	// 获取统计信息
-	if stats := bhc.manager.GetStats(); stats != nil {
-		health.Metrics = stats
-	}
-	
-	return health
-}
-
-// NetworkHealthChecker 网络健康检查器
-type NetworkHealthChecker struct {
-	network NetworkManager
-}
-
-type NetworkManager interface {
-	GetPeerCount() int
-	GetHealthyPeerCount() int
-	GetNetworkStats() map[string]interface{}
-	IsRunning() bool
-}
-
-func NewNetworkHealthChecker(network NetworkManager) *NetworkHealthChecker {
-	return &NetworkHealthChecker{network: network}
-}
-
-func (nhc *NetworkHealthChecker) GetName() string {
-	return "network"
-}
-
-func (nhc *NetworkHealthChecker) CheckHealth() *ComponentHealth {
-	health := &ComponentHealth{
-		Name:    nhc.GetName(),
-		Status:  HealthStatusHealthy,
-		Message: "Network is operating normally",
-		Metrics: make(map[string]interface{}),
-	}
-	
-	if nhc.network == nil {
-		health.Status = HealthStatusCritical
-		health.Message = "Network manager is not available"
-		return health
-	}
-	
-	if !nhc.network.IsRunning() {
-		health.Status = HealthStatusCritical
-		health.Message = "Network is not running"
-		return health
-	}
-	
-	peerCount := nhc.network.GetPeerCount()
-	healthyPeerCount := nhc.network.GetHealthyPeerCount()
-	
-	health.Metrics["peer_count"] = peerCount
-	health.Metrics["healthy_peer_count"] = healthyPeerCount
-	
-	if peerCount == 0 {
-		health.Status = HealthStatusWarning
-		health.Message = "No peers connected"
-	} else if healthyPeerCount < peerCount/2 {
-		health.Status = HealthStatusWarning
-		health.Message = "Less than half of peers are healthy"
-	}
-	
-	// 获取网络统计信息
-	if stats := nhc.network.GetNetworkStats(); stats != nil {
-		for k, v := range stats {
-			health.Metrics[k] = v
-		}
-	}
-	
-	return health
-}
-
-// TransactionPoolHealthChecker 交易池健康检查器
-type TransactionPoolHealthChecker struct {
-	txPool TransactionPoolManager
-}
-
-type TransactionPoolManager interface {
-	GetTransactionCount() int
-	GetStats() map[string]interface{}
-}
-
-func NewTransactionPoolHealthChecker(txPool TransactionPoolManager) *TransactionPoolHealthChecker {
-	return &TransactionPoolHealthChecker{txPool: txPool}
-}
-
-func (tphc *TransactionPoolHealthChecker) GetName() string {
-	return "transaction_pool"
-}
-
-func (tphc *TransactionPoolHealthChecker) CheckHealth() *ComponentHealth {
-	health := &ComponentHealth{
-		Name:    tphc.GetName(),
-		Status:  HealthStatusHealthy,
-		Message: "Transaction pool is operating normally",
-		Metrics: make(map[string]interface{}),
-	}
-	
-	if tphc.txPool == nil {
-		health.Status = HealthStatusCritical
-		health.Message = "Transaction pool is not available"
-		return health
-	}
-	
-	txCount := tphc.txPool.GetTransactionCount()
-	health.Metrics["transaction_count"] = txCount
-	
-	// 获取交易池统计信息
-	if stats := tphc.txPool.GetStats(); stats != nil {
-		for k, v := range stats {
-			health.Metrics[k] = v
-		}
-	}
-	
-	return health
+	delete(hm.nodeHealthMap, address)
 }

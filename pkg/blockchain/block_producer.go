@@ -20,6 +20,53 @@ type BlockProducer struct {
 	isRunning    bool               // 是否正在运行
 	stopCh       chan struct{}      // 停止信号
 	blockCh      chan *types.Block  // 新区块通道
+	// 新增：空区块生成策略
+	emptyBlockConfig *EmptyBlockConfig // 空区块配置
+	networkChecker   NetworkChecker    // 网络检查器
+}
+
+// EmptyBlockConfig 空区块配置
+type EmptyBlockConfig struct {
+	Enabled              bool          // 是否启用空区块
+	MaxEmptyInterval     time.Duration // 最大空区块间隔
+	NetworkPartitionMode bool          // 网络分区模式
+	SystemValidator      types.Address // 系统默认占位地址
+}
+
+// NetworkChecker 网络检查器接口
+type NetworkChecker interface {
+	IsInSafetyMode() bool                    // 是否处于安全模式
+	GetActiveValidatorRatio() float64        // 获取活跃验证者比例
+	IsCurrentValidator(types.Address, uint64) bool // 是否为当前验证者
+}
+
+// EmptyBlockTrigger 空区块触发原因
+type EmptyBlockTrigger int
+
+const (
+	TriggerNoTransactions EmptyBlockTrigger = iota // 无交易
+	TriggerSafetyMode                               // 安全模式
+	TriggerNetworkPartition                         // 网络分区
+	TriggerValidatorInactive                        // 验证者非活跃
+	TriggerTransactionFailure                       // 交易处理失败
+)
+
+// String 返回触发原因的字符串表示
+func (t EmptyBlockTrigger) String() string {
+	switch t {
+	case TriggerNoTransactions:
+		return "NO_TRANSACTIONS"
+	case TriggerSafetyMode:
+		return "SAFETY_MODE"
+	case TriggerNetworkPartition:
+		return "NETWORK_PARTITION"
+	case TriggerValidatorInactive:
+		return "VALIDATOR_INACTIVE"
+	case TriggerTransactionFailure:
+		return "TRANSACTION_FAILURE"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 // TxPool 交易池接口
@@ -60,7 +107,28 @@ func NewBlockProducer(
 		stateManager: stateManager,
 		stopCh:       make(chan struct{}),
 		blockCh:      make(chan *types.Block, 10),
+		// 初始化空区块配置
+		emptyBlockConfig: &EmptyBlockConfig{
+			Enabled:              true,
+			MaxEmptyInterval:     30 * time.Second, // 30秒最大空区块间隔
+			NetworkPartitionMode: false,
+			SystemValidator:      types.Address{}, // 系统默认地址
+		},
 	}
+}
+
+// SetNetworkChecker 设置网络检查器
+func (bp *BlockProducer) SetNetworkChecker(checker NetworkChecker) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.networkChecker = checker
+}
+
+// SetEmptyBlockConfig 设置空区块配置
+func (bp *BlockProducer) SetEmptyBlockConfig(config *EmptyBlockConfig) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.emptyBlockConfig = config
 }
 
 // Start 启动区块生产器
@@ -113,16 +181,22 @@ func (bp *BlockProducer) ProduceBlock(blockTime int64, blockNumber uint64) (*typ
 	// 获取当前状态根
 	stateRoot := bp.stateManager.GetCurrentStateRoot()
 	
+	// 检查是否需要生成空区块
+	emptyTrigger, shouldCreateEmpty := bp.shouldCreateEmptyBlock(blockNumber)
+	if shouldCreateEmpty {
+		return bp.createEmptyBlockWithReason(blockTime, blockNumber, prevHash, stateRoot, emptyTrigger)
+	}
+	
 	// 尝试获取待打包的交易
 	pendingTxs, err := bp.txPool.GetPendingTransactions(types.MaxTxPerBlock)
 	if err != nil {
 		// 如果获取交易失败，生成空区块
-		return bp.createEmptyBlock(blockTime, blockNumber, prevHash, stateRoot)
+		return bp.createEmptyBlockWithReason(blockTime, blockNumber, prevHash, stateRoot, TriggerTransactionFailure)
 	}
 	
 	// 如果没有待处理的交易，生成空区块
 	if len(pendingTxs) == 0 {
-		return bp.createEmptyBlock(blockTime, blockNumber, prevHash, stateRoot)
+		return bp.createEmptyBlockWithReason(blockTime, blockNumber, prevHash, stateRoot, TriggerNoTransactions)
 	}
 	
 	// 验证并过滤交易
@@ -130,40 +204,180 @@ func (bp *BlockProducer) ProduceBlock(blockTime int64, blockNumber uint64) (*typ
 	
 	// 如果没有有效交易，生成空区块
 	if len(validTxs) == 0 {
-		return bp.createEmptyBlock(blockTime, blockNumber, prevHash, stateRoot)
+		return bp.createEmptyBlockWithReason(blockTime, blockNumber, prevHash, stateRoot, TriggerTransactionFailure)
 	}
 	
 	// 创建包含交易的区块
 	return bp.createBlockWithTransactions(blockTime, blockNumber, prevHash, stateRoot, validTxs)
 }
 
-// createEmptyBlock 创建空区块
-func (bp *BlockProducer) createEmptyBlock(blockTime int64, blockNumber uint64, prevHash types.Hash, stateRoot types.Hash) (*types.Block, error) {
+// shouldCreateEmptyBlock 判断是否应该创建空区块
+func (bp *BlockProducer) shouldCreateEmptyBlock(blockNumber uint64) (EmptyBlockTrigger, bool) {
+	// 检查空区块配置
+	if !bp.emptyBlockConfig.Enabled {
+		return TriggerNoTransactions, false
+	}
+
+	// 检查网络检查器是否可用
+	if bp.networkChecker == nil {
+		return TriggerNoTransactions, false
+	}
+
+	// 检查是否处于安全模式（活跃验证者不足60%）
+	if bp.networkChecker.IsInSafetyMode() {
+		return TriggerSafetyMode, true
+	}
+
+	// 检查当前验证者是否为本节点，但节点非活跃状态
+	if !bp.networkChecker.IsCurrentValidator(bp.keyPair.Address, blockNumber) {
+		// 如果不是当前验证者，但活跃验证者比例过低，仍生成空区块占位
+		activeRatio := bp.networkChecker.GetActiveValidatorRatio()
+		if activeRatio < 0.8 { // 80%以下时考虑生成空区块维持时间链
+			return TriggerValidatorInactive, true
+		}
+	}
+
+	// 检查网络分区模式
+	if bp.emptyBlockConfig.NetworkPartitionMode {
+		return TriggerNetworkPartition, true
+	}
+
+	return TriggerNoTransactions, false
+}
+
+// createEmptyBlockWithReason 根据原因创建空区块
+func (bp *BlockProducer) createEmptyBlockWithReason(
+	blockTime int64,
+	blockNumber uint64,
+	prevHash types.Hash,
+	stateRoot types.Hash,
+	trigger EmptyBlockTrigger,
+) (*types.Block, error) {
+	
+	// 根据触发原因选择验证者地址
+	validatorAddr := bp.getValidatorForEmptyBlock(trigger)
+	
 	// 创建空区块头
 	header := &types.BlockHeader{
 		Number:         blockNumber,
 		Timestamp:      blockTime,
 		PrevHash:       prevHash,
-		TxRoot:         types.EmptyTxRoot(), // 空交易根
-		StateRoot:      stateRoot,
-		Validator:      bp.keyPair.Address,
+		TxRoot:         types.EmptyTxRoot(), // 确定性空交易根
+		StateRoot:      stateRoot,           // 延续前块状态
+		Validator:      validatorAddr,
 		ShardID:        types.ShardID,
 		AdjacentHashes: [3]types.Hash{}, // 第一阶段为空
 	}
 	
-	// 签名区块头
-	err := bp.keyPair.SignBlock(header)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign empty block: %w", err)
+	// 根据触发原因决定是否签名
+	if trigger == TriggerSafetyMode || trigger == TriggerNetworkPartition {
+		// 安全模式或网络分区时使用空签名
+		header.Signature = types.Signature{}
+	} else {
+		// 其他情况正常签名
+		err := bp.keyPair.SignBlock(header)
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign empty block: %w", err)
+		}
 	}
 	
 	// 创建空区块
 	block := &types.Block{
 		Header:       *header,
-		Transactions: []types.Hash{}, // 空交易列表
+		Transactions: []types.Hash{}, // 确定性空交易列表
 	}
 	
+	// 记录空区块创建日志
+	fmt.Printf("📦 Created empty block %d (reason: %s) at %s\n",
+		blockNumber, trigger.String(), time.Unix(blockTime, 0).Format("15:04:05"))
+	
 	return block, nil
+}
+
+// getValidatorForEmptyBlock 根据触发原因获取验证者地址
+func (bp *BlockProducer) getValidatorForEmptyBlock(trigger EmptyBlockTrigger) types.Address {
+	switch trigger {
+	case TriggerSafetyMode, TriggerNetworkPartition:
+		// 安全模式或网络分区时使用系统默认地址
+		if !bp.emptyBlockConfig.SystemValidator.IsEmpty() {
+			return bp.emptyBlockConfig.SystemValidator
+		}
+		// 如果没有配置系统验证者，使用空地址
+		return types.Address{}
+	default:
+		// 其他情况使用当前验证者地址
+		return bp.keyPair.Address
+	}
+}
+
+// createEmptyBlock 创建空区块（兼容方法）
+func (bp *BlockProducer) createEmptyBlock(blockTime int64, blockNumber uint64, prevHash types.Hash, stateRoot types.Hash) (*types.Block, error) {
+	return bp.createEmptyBlockWithReason(blockTime, blockNumber, prevHash, stateRoot, TriggerNoTransactions)
+}
+
+// =============== 空区块管理与统计方法 ===============
+
+// GetEmptyBlockStats 获取空区块统计信息
+func (bp *BlockProducer) GetEmptyBlockStats() map[string]interface{} {
+	bp.mu.RLock()
+	defer bp.mu.RUnlock()
+
+	return map[string]interface{}{
+		"empty_block_enabled":      bp.emptyBlockConfig.Enabled,
+		"max_empty_interval":       bp.emptyBlockConfig.MaxEmptyInterval.Seconds(),
+		"network_partition_mode":   bp.emptyBlockConfig.NetworkPartitionMode,
+		"system_validator":         bp.emptyBlockConfig.SystemValidator.String(),
+		"network_checker_available": bp.networkChecker != nil,
+	}
+}
+
+// EnableEmptyBlocks 启用空区块生成
+func (bp *BlockProducer) EnableEmptyBlocks(enabled bool) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.emptyBlockConfig.Enabled = enabled
+}
+
+// SetNetworkPartitionMode 设置网络分区模式
+func (bp *BlockProducer) SetNetworkPartitionMode(enabled bool) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.emptyBlockConfig.NetworkPartitionMode = enabled
+}
+
+// SetSystemValidator 设置系统默认验证者地址
+func (bp *BlockProducer) SetSystemValidator(address types.Address) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.emptyBlockConfig.SystemValidator = address
+}
+
+// ValidateEmptyBlock 验证空区块的有效性
+func (bp *BlockProducer) ValidateEmptyBlock(block *types.Block) error {
+	// 验证是否为空区块
+	if !block.IsEmpty() {
+		return fmt.Errorf("block is not empty")
+	}
+
+	// 验证交易根是否为空交易根
+	if block.Header.TxRoot != types.EmptyTxRoot() {
+		return fmt.Errorf("empty block should have empty tx root")
+	}
+
+	// 验证分片ID
+	if block.Header.ShardID != types.ShardID {
+		return fmt.Errorf("invalid shard ID in empty block")
+	}
+
+	// 验证验证者地址（允许空地址用于系统生成的空区块）
+	if !block.Header.Validator.IsEmpty() && block.Header.Validator != bp.keyPair.Address {
+		// 检查是否为配置的系统验证者
+		if block.Header.Validator != bp.emptyBlockConfig.SystemValidator {
+			return fmt.Errorf("invalid validator address in empty block")
+		}
+	}
+
+	return nil
 }
 
 // createBlockWithTransactions 创建包含交易的区块

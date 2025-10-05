@@ -34,6 +34,7 @@ type Storage interface {
 	
 	// 通用操作
 	Close() error
+	GetStats() map[string]interface{} // 获取存储统计信息
 }
 
 // MockStorage 模拟存储实现（用于测试）
@@ -65,3 +66,13 @@ func (m *MockStorage) UpdateLatestBlockHeight(height uint64) error             {
 func (m *MockStorage) SaveGenesisBlock(genesis *types.GenesisBlock) error      { return nil }
 func (m *MockStorage) GetGenesisBlock() (*types.GenesisBlock, error)           { return nil, nil }
 func (m *MockStorage) Close() error                                            { return nil }
+func (m *MockStorage) GetStats() map[string]interface{} {
+	return map[string]interface{}{
+		"reads_total":      int64(0),
+		"writes_total":     int64(0),
+		"bytes_read":       int64(0),
+		"bytes_written":    int64(0),
+		"batches_total":    int64(0),
+		"compactions_total": int64(0),
+	}
+}

@@ -12,13 +12,13 @@ import (
 // TransactionPool 交易池实现
 type TransactionPool struct {
 	mu           sync.RWMutex
-	transactions map[types.Hash]*types.Transaction // 所有交易
-	pending      *TxPriorityQueue                  // 待处理交易优先队列
+	transactions map[types.Hash]*types.Transaction      // 所有交易
+	pending      *TxPriorityQueue                       // 待处理交易优先队列
 	queued       map[types.Address][]*types.Transaction // 按地址排队的交易
-	maxTxs       int                               // 最大交易数
-	maxLifetime  time.Duration                     // 交易最大生存时间
-	stopCh       chan struct{}                     // 停止信号
-	isRunning    bool                              // 是否运行中
+	maxTxs       int                                    // 最大交易数
+	maxLifetime  time.Duration                          // 交易最大生存时间
+	stopCh       chan struct{}                          // 停止信号
+	isRunning    bool                                   // 是否运行中
 }
 
 // TxPriorityItem 交易优先队列项
@@ -68,9 +68,12 @@ func (pq *TxPriorityQueue) Pop() interface{} {
 
 // NewTransactionPool 创建新的交易池
 func NewTransactionPool(maxTxs int, maxLifetime time.Duration) *TransactionPool {
+	pending := &TxPriorityQueue{}
+	heap.Init(pending)
+
 	return &TransactionPool{
 		transactions: make(map[types.Hash]*types.Transaction),
-		pending:      &TxPriorityQueue{},
+		pending:      pending,
 		queued:       make(map[types.Address][]*types.Transaction),
 		maxTxs:       maxTxs,
 		maxLifetime:  maxLifetime,
@@ -82,17 +85,17 @@ func NewTransactionPool(maxTxs int, maxLifetime time.Duration) *TransactionPool 
 func (tp *TransactionPool) Start() error {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	
+
 	if tp.isRunning {
 		return fmt.Errorf("transaction pool already running")
 	}
-	
+
 	tp.isRunning = true
 	tp.stopCh = make(chan struct{})
-	
+
 	// 启动清理协程
 	go tp.cleanupLoop()
-	
+
 	return nil
 }
 
@@ -100,11 +103,11 @@ func (tp *TransactionPool) Start() error {
 func (tp *TransactionPool) Stop() {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	
+
 	if !tp.isRunning {
 		return
 	}
-	
+
 	tp.isRunning = false
 	close(tp.stopCh)
 }
@@ -113,18 +116,18 @@ func (tp *TransactionPool) Stop() {
 func (tp *TransactionPool) AddTransaction(tx *types.Transaction) error {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	
+
 	if !tp.isRunning {
 		return fmt.Errorf("transaction pool not running")
 	}
-	
+
 	hash := tx.Hash()
-	
+
 	// 检查交易是否已存在
 	if _, exists := tp.transactions[hash]; exists {
 		return fmt.Errorf("transaction already exists: %s", hash.String())
 	}
-	
+
 	// 检查交易池是否已满
 	if len(tp.transactions) >= tp.maxTxs {
 		// 移除优先级最低的交易
@@ -132,15 +135,15 @@ func (tp *TransactionPool) AddTransaction(tx *types.Transaction) error {
 			return fmt.Errorf("failed to evict transaction: %w", err)
 		}
 	}
-	
+
 	// 验证交易
 	if err := tp.validateTransaction(tx); err != nil {
 		return fmt.Errorf("transaction validation failed: %w", err)
 	}
-	
+
 	// 添加到交易池
 	tp.transactions[hash] = tx
-	
+
 	// 添加到优先队列
 	item := &TxPriorityItem{
 		Tx:       tx,
@@ -148,7 +151,7 @@ func (tp *TransactionPool) AddTransaction(tx *types.Transaction) error {
 		AddTime:  time.Now(),
 	}
 	heap.Push(tp.pending, item)
-	
+
 	return nil
 }
 
@@ -156,12 +159,12 @@ func (tp *TransactionPool) AddTransaction(tx *types.Transaction) error {
 func (tp *TransactionPool) GetTransaction(hash types.Hash) (*types.Transaction, error) {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
-	
+
 	tx, exists := tp.transactions[hash]
 	if !exists {
 		return nil, fmt.Errorf("transaction not found: %s", hash.String())
 	}
-	
+
 	return tx, nil
 }
 
@@ -169,7 +172,7 @@ func (tp *TransactionPool) GetTransaction(hash types.Hash) (*types.Transaction, 
 func (tp *TransactionPool) RemoveTransaction(hash types.Hash) error {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	
+
 	return tp.removeTransaction(hash)
 }
 
@@ -179,15 +182,15 @@ func (tp *TransactionPool) removeTransaction(hash types.Hash) error {
 	if !exists {
 		return fmt.Errorf("transaction not found: %s", hash.String())
 	}
-	
+
 	delete(tp.transactions, hash)
-	
+
 	// 从优先队列中移除（简化实现，重建队列）
 	tp.rebuildPendingQueue()
-	
+
 	// 从排队列表中移除
 	tp.removeFromQueued(tx.From, hash)
-	
+
 	return nil
 }
 
@@ -195,11 +198,11 @@ func (tp *TransactionPool) removeTransaction(hash types.Hash) error {
 func (tp *TransactionPool) RemoveTransactions(hashes []types.Hash) error {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	
+
 	for _, hash := range hashes {
 		tp.removeTransaction(hash)
 	}
-	
+
 	return nil
 }
 
@@ -207,20 +210,28 @@ func (tp *TransactionPool) RemoveTransactions(hashes []types.Hash) error {
 func (tp *TransactionPool) GetPendingTransactions(maxCount int) ([]*types.Transaction, error) {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
-	
+
+	if !tp.isRunning {
+		return nil, fmt.Errorf("transaction pool not running")
+	}
+
+	if tp.pending == nil {
+		return []*types.Transaction{}, nil
+	}
+
 	var transactions []*types.Transaction
 	count := 0
-	
+
 	// 从优先队列获取高优先级交易
 	tempQueue := make(TxPriorityQueue, len(*tp.pending))
 	copy(tempQueue, *tp.pending)
-	
+
 	for len(tempQueue) > 0 && count < maxCount {
 		item := heap.Pop(&tempQueue).(*TxPriorityItem)
 		transactions = append(transactions, item.Tx)
 		count++
 	}
-	
+
 	return transactions, nil
 }
 
@@ -244,24 +255,24 @@ func (tp *TransactionPool) validateTransaction(tx *types.Transaction) error {
 	if tx.From.IsEmpty() || tx.To.IsEmpty() {
 		return fmt.Errorf("invalid from or to address")
 	}
-	
+
 	if tx.Amount == 0 {
 		return fmt.Errorf("invalid amount")
 	}
-	
+
 	if tx.GasPrice == 0 || tx.GasLimit == 0 {
 		return fmt.Errorf("invalid gas price or limit")
 	}
-	
+
 	if tx.Signature.IsEmpty() {
 		return fmt.Errorf("missing signature")
 	}
-	
+
 	// 检查分片ID
 	if tx.ShardID != types.ShardID {
 		return fmt.Errorf("invalid shard ID")
 	}
-	
+
 	return nil
 }
 
@@ -270,11 +281,11 @@ func (tp *TransactionPool) evictLowestPriority() error {
 	if tp.pending.Len() == 0 {
 		return fmt.Errorf("no transactions to evict")
 	}
-	
+
 	// 找到优先级最低的交易
 	lowest := (*tp.pending)[tp.pending.Len()-1]
 	hash := lowest.Tx.Hash()
-	
+
 	return tp.removeTransaction(hash)
 }
 
@@ -282,7 +293,7 @@ func (tp *TransactionPool) evictLowestPriority() error {
 func (tp *TransactionPool) rebuildPendingQueue() {
 	tp.pending = &TxPriorityQueue{}
 	heap.Init(tp.pending)
-	
+
 	for _, tx := range tp.transactions {
 		item := &TxPriorityItem{
 			Tx:       tx,
@@ -312,7 +323,7 @@ func (tp *TransactionPool) removeFromQueued(address types.Address, hash types.Ha
 func (tp *TransactionPool) cleanupLoop() {
 	ticker := time.NewTicker(30 * time.Second) // 每30秒清理一次
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-tp.stopCh:
@@ -327,16 +338,16 @@ func (tp *TransactionPool) cleanupLoop() {
 func (tp *TransactionPool) cleanupExpiredTransactions() {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	
+
 	now := time.Now()
 	var expiredHashes []types.Hash
-	
+
 	// 检查所有交易，找出过期的
 	for hash, tx := range tp.transactions {
 		// 简化实现：使用交易添加时间（实际应存储添加时间戳）
 		// 这里假设交易在池中存在超过最大生存时间就过期
 		_ = tx // 避免编译器警告
-		
+
 		// 实际实现中应该检查交易的添加时间
 		// 这里简化为检查优先队列中的时间戳
 		for i := 0; i < tp.pending.Len(); i++ {
@@ -347,7 +358,7 @@ func (tp *TransactionPool) cleanupExpiredTransactions() {
 			}
 		}
 	}
-	
+
 	// 移除过期交易
 	for _, hash := range expiredHashes {
 		tp.removeTransaction(hash)
@@ -358,7 +369,7 @@ func (tp *TransactionPool) cleanupExpiredTransactions() {
 func (tp *TransactionPool) GetStats() map[string]interface{} {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
-	
+
 	return map[string]interface{}{
 		"total_transactions":   len(tp.transactions),
 		"pending_transactions": tp.pending.Len(),
@@ -373,7 +384,7 @@ func (tp *TransactionPool) GetStats() map[string]interface{} {
 func (tp *TransactionPool) Clear() {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
-	
+
 	tp.transactions = make(map[types.Hash]*types.Transaction)
 	tp.pending = &TxPriorityQueue{}
 	tp.queued = make(map[types.Address][]*types.Transaction)
@@ -384,7 +395,7 @@ func (tp *TransactionPool) Clear() {
 func (tp *TransactionPool) HasTransaction(hash types.Hash) bool {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
-	
+
 	_, exists := tp.transactions[hash]
 	return exists
 }
@@ -393,14 +404,14 @@ func (tp *TransactionPool) HasTransaction(hash types.Hash) bool {
 func (tp *TransactionPool) GetTransactionsByAddress(address types.Address) []*types.Transaction {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
-	
+
 	var transactions []*types.Transaction
-	
+
 	for _, tx := range tp.transactions {
 		if tx.From == address || tx.To == address {
 			transactions = append(transactions, tx)
 		}
 	}
-	
+
 	return transactions
 }

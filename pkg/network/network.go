@@ -24,16 +24,44 @@ const (
 	MsgHeartbeat
 	MsgPing
 	MsgPong
+	MsgValidatorUpdate
+	MsgEmptyBlock
+	MsgSyncRequest
+	MsgSyncResponse
 )
+
+// MessagePriority 消息优先级
+type MessagePriority uint8
+
+const (
+	PriorityHigh   MessagePriority = iota // 高优先级（立即处理）
+	PriorityMedium                         // 中优先级（批量处理）
+	PriorityLow                            // 低优先级（空闲处理）
+)
+
+// GetMessagePriority 获取消息类型对应的优先级
+func GetMessagePriority(msgType MessageType) MessagePriority {
+	switch msgType {
+	case MsgNewBlock, MsgValidatorUpdate, MsgEmptyBlock:
+		return PriorityHigh // 区块和验证者消息高优先级
+	case MsgNewTransaction, MsgHeartbeat, MsgPing, MsgPong:
+		return PriorityMedium // 交易和心跳中优先级
+	default:
+		return PriorityLow // 其他消息低优先级
+	}
+}
 
 // Message 网络消息结构
 type Message struct {
-	Type      MessageType `json:"type"`
-	Data      []byte      `json:"data"`
-	Timestamp int64       `json:"timestamp"`
-	NodeID    string      `json:"node_id"`
-	MessageID string      `json:"message_id"` // 消息唯一ID，用于去重
-	TTL       int         `json:"ttl"`        // 生存时间，防止无限传播
+	Type      MessageType     `json:"type"`
+	Priority  MessagePriority `json:"priority"`  // 新增：消息优先级
+	Data      []byte          `json:"data"`
+	Timestamp int64           `json:"timestamp"`
+	NodeID    string          `json:"node_id"`
+	MessageID string          `json:"message_id"` // 消息唯一ID，用于去重
+	TTL       int             `json:"ttl"`        // 生存时间，防止无限传播
+	Size      int             `json:"size"`       // 消息大小
+	Retries   int             `json:"retries"`    // 重试次数
 }
 
 // Peer 网络节点
@@ -62,6 +90,55 @@ type NetworkStats struct {
 	FailedSends           uint64    `json:"failed_sends"`
 	ActiveConnections     int       `json:"active_connections"`
 	StartTime             time.Time `json:"start_time"`
+	// 新增：优先级统计
+	HighPriorityMessages  uint64    `json:"high_priority_messages"`
+	MediumPriorityMessages uint64   `json:"medium_priority_messages"`
+	LowPriorityMessages   uint64    `json:"low_priority_messages"`
+	DroppedMessages       uint64    `json:"dropped_messages"`
+	CongestionEvents      uint64    `json:"congestion_events"`
+}
+
+// PriorityQueue 优先级消息队列
+type PriorityQueue struct {
+	mu           sync.RWMutex
+	highPriority chan *Message // 高优先级队列
+	mediumPriority chan *Message // 中优先级队列
+	lowPriority  chan *Message // 低优先级队列
+	maxSize      int           // 最大队列大小
+	dropCount    uint64        // 丢弃消息数
+	isRunning    bool          // 是否运行中
+	stopCh       chan struct{} // 停止信号
+}
+
+// CongestionController 拥塞控制器
+type CongestionController struct {
+	mu               sync.RWMutex
+	congestionLevel  float64           // 拥塞级别(0-1)
+	windowSize       int               // 滑动窗口大小
+	lastUpdate       time.Time         // 最后更新时间
+	throughputHistory []float64         // 吞吐量历史
+	latencyHistory   []time.Duration   // 延迟历史
+	adaptiveMode     bool              // 自适应模式
+	thresholds       CongestionThresholds // 拥塞阈值
+}
+
+// CongestionThresholds 拥塞控制阈值
+type CongestionThresholds struct {
+	LatencyThreshold  time.Duration // 延迟阈值
+	ThroughputMin     float64       // 最小吞吐量
+	QueueSizeMax      int           // 最大队列大小
+	DropRateMax       float64       // 最大丢包率
+}
+
+// BandwidthLimiter 带宽限制器
+type BandwidthLimiter struct {
+	mu            sync.RWMutex
+	limit         int64     // 带宽限制(bytes/s)
+	used          int64     // 已使用带宽
+	lastReset     time.Time // 最后重置时间
+	bucketSize    int64     // 令牌桶大小
+	tokens        int64     // 当前令牌数
+	bytesPerToken int64     // 每个令牌代表的字节数
 }
 
 // Network P2P网络管理器
@@ -74,8 +151,12 @@ type Network struct {
 	isRunning   bool
 	stopCh      chan struct{}
 	msgHandlers map[MessageType]MessageHandler
-	outgoing    chan *Message
-
+	
+	// 新增：优先级消息处理
+	priorityQueue    *PriorityQueue
+	congestionCtrl   *CongestionController
+	bandwidthLimiter *BandwidthLimiter
+	
 	// 消息去重和路由优化
 	messageCache map[string]time.Time // 消息缓存，用于去重
 	cacheExpiry  time.Duration        // 缓存过期时间
@@ -94,13 +175,47 @@ type MessageHandler func(msg *Message, peer *Peer) error
 
 // NewNetwork 创建新的网络管理器
 func NewNetwork(nodeID, listenAddr string) *Network {
+	// 创建优先级队列
+	priorityQueue := &PriorityQueue{
+		highPriority:   make(chan *Message, 1000),
+		mediumPriority: make(chan *Message, 5000),
+		lowPriority:    make(chan *Message, 10000),
+		maxSize:        16000,
+		stopCh:         make(chan struct{}),
+	}
+
+	// 创建拥塞控制器
+	congestionCtrl := &CongestionController{
+		windowSize:       100,
+		throughputHistory: make([]float64, 100),
+		latencyHistory:   make([]time.Duration, 100),
+		adaptiveMode:     true,
+		thresholds: CongestionThresholds{
+			LatencyThreshold: 100 * time.Millisecond,
+			ThroughputMin:    1024 * 1024, // 1MB/s
+			QueueSizeMax:     15000,
+			DropRateMax:      0.05, // 5%
+		},
+	}
+
+	// 创建带宽限制器
+	bandwidthLimiter := &BandwidthLimiter{
+		limit:         10 * 1024 * 1024, // 10MB/s
+		bucketSize:    10 * 1024 * 1024,
+		tokens:        10 * 1024 * 1024,
+		bytesPerToken: 1,
+		lastReset:     time.Now(),
+	}
+
 	return &Network{
 		nodeID:              nodeID,
 		listenAddr:          listenAddr,
 		peers:               make(map[string]*Peer),
 		stopCh:              make(chan struct{}),
 		msgHandlers:         make(map[MessageType]MessageHandler),
-		outgoing:            make(chan *Message, 1000),
+		priorityQueue:       priorityQueue,
+		congestionCtrl:      congestionCtrl,
+		bandwidthLimiter:    bandwidthLimiter,
 		messageCache:        make(map[string]time.Time),
 		cacheExpiry:         time.Minute * 5, // 5分钟过期
 		maxCacheSize:        10000,
@@ -177,11 +292,16 @@ func (n *Network) Start() error {
 	n.stopCh = make(chan struct{})
 	n.stats.StartTime = time.Now()
 
+	// 启动优先级队列
+	n.priorityQueue.isRunning = true
+	n.priorityQueue.stopCh = make(chan struct{})
+
 	// 启动各种协程
 	go n.acceptLoop()
 	go n.messageLoop()
 	go n.healthCheckLoop()
 	go n.cacheCleanupLoop()
+	go n.congestionMonitorLoop() // 新增：拥塞监控
 
 	return nil
 }
@@ -197,6 +317,10 @@ func (n *Network) Stop() {
 
 	n.isRunning = false
 	close(n.stopCh)
+
+	// 停止优先级队列
+	n.priorityQueue.isRunning = false
+	close(n.priorityQueue.stopCh)
 
 	if n.listener != nil {
 		n.listener.Close()
@@ -421,8 +545,49 @@ func (n *Network) messageLoop() {
 		select {
 		case <-n.stopCh:
 			return
-		case msg := <-n.outgoing:
+		case msg := <-n.priorityQueue.highPriority:
 			n.sendToPeers(msg)
+		case msg := <-n.priorityQueue.mediumPriority:
+			// 检查拥塞情况，如果没有高优先级消息再处理
+			select {
+			case highMsg := <-n.priorityQueue.highPriority:
+				// 先处理高优先级消息
+				n.sendToPeers(highMsg)
+				// 再放回中优先级消息
+				select {
+				case n.priorityQueue.mediumPriority <- msg:
+				default:
+					n.stats.DroppedMessages++
+				}
+			default:
+				n.sendToPeers(msg)
+			}
+		case msg := <-n.priorityQueue.lowPriority:
+			// 检查是否有更高优先级消息
+			select {
+			case highMsg := <-n.priorityQueue.highPriority:
+				n.sendToPeers(highMsg)
+				select {
+				case n.priorityQueue.lowPriority <- msg:
+				default:
+					n.stats.DroppedMessages++
+				}
+			case mediumMsg := <-n.priorityQueue.mediumPriority:
+				n.sendToPeers(mediumMsg)
+				select {
+				case n.priorityQueue.lowPriority <- msg:
+				default:
+					n.stats.DroppedMessages++
+				}
+			default:
+				// 检查拥塞级别，决定是否处理低优先级消息
+				if n.congestionCtrl.congestionLevel < 0.8 {
+					n.sendToPeers(msg)
+				} else {
+					// 拥塞时丢弃低优先级消息
+					n.stats.DroppedMessages++
+				}
+			}
 		}
 	}
 }
@@ -498,16 +663,49 @@ func (n *Network) cacheCleanupLoop() {
 	}
 }
 
-// broadcast 广播消息
+// broadcast 广播消息到优先级队列
 func (n *Network) broadcast(msg *Message) error {
-	select {
-	case n.outgoing <- msg:
-		return nil
+	// 设置消息优先级
+	msg.Priority = GetMessagePriority(msg.Type)
+	msg.Size = len(msg.Data)
+	
+	// 检查带宽限制
+	if !n.checkBandwidth(msg.Size) {
+		n.stats.DroppedMessages++
+		return fmt.Errorf("bandwidth limit exceeded")
+	}
+	
+	// 根据优先级将消息放入相应队列
+	switch msg.Priority {
+	case PriorityHigh:
+		select {
+		case n.priorityQueue.highPriority <- msg:
+			n.stats.HighPriorityMessages++
+			return nil
+		default:
+			n.stats.DroppedMessages++
+			return fmt.Errorf("high priority queue full")
+		}
+	case PriorityMedium:
+		select {
+		case n.priorityQueue.mediumPriority <- msg:
+			n.stats.MediumPriorityMessages++
+			return nil
+		default:
+			n.stats.DroppedMessages++
+			return fmt.Errorf("medium priority queue full")
+		}
+	case PriorityLow:
+		select {
+		case n.priorityQueue.lowPriority <- msg:
+			n.stats.LowPriorityMessages++
+			return nil
+		default:
+			n.stats.DroppedMessages++
+			return fmt.Errorf("low priority queue full")
+		}
 	default:
-		n.mu.Lock()
-		n.stats.FailedSends++
-		n.mu.Unlock()
-		return fmt.Errorf("outgoing message queue full")
+		return fmt.Errorf("unknown message priority")
 	}
 }
 
@@ -663,6 +861,129 @@ func (n *Network) GetNetworkStats() map[string]interface{} {
 	}
 
 	return stats
+}
+
+// =============== 新增：优先级和拥塞控制方法 ===============
+
+// checkBandwidth 检查带宽限制
+func (n *Network) checkBandwidth(size int) bool {
+	n.bandwidthLimiter.mu.Lock()
+	defer n.bandwidthLimiter.mu.Unlock()
+	
+	now := time.Now()
+	// 每秒重置令牌桶
+	if now.Sub(n.bandwidthLimiter.lastReset) >= time.Second {
+		n.bandwidthLimiter.tokens = n.bandwidthLimiter.bucketSize
+		n.bandwidthLimiter.used = 0
+		n.bandwidthLimiter.lastReset = now
+	}
+	
+	// 检查是否有足够的令牌
+	requiredTokens := int64(size) / n.bandwidthLimiter.bytesPerToken
+	if requiredTokens <= 0 {
+		requiredTokens = 1
+	}
+	
+	if n.bandwidthLimiter.tokens >= requiredTokens {
+		n.bandwidthLimiter.tokens -= requiredTokens
+		n.bandwidthLimiter.used += int64(size)
+		return true
+	}
+	
+	return false
+}
+
+// updateCongestionLevel 更新拥塞级别
+func (n *Network) updateCongestionLevel() {
+	n.congestionCtrl.mu.Lock()
+	defer n.congestionCtrl.mu.Unlock()
+	
+	now := time.Now()
+	if now.Sub(n.congestionCtrl.lastUpdate) < time.Second {
+		return // 避免过于频繁的更新
+	}
+	
+	// 计算当前的拥塞指标
+	queueSize := len(n.priorityQueue.highPriority) + 
+				 len(n.priorityQueue.mediumPriority) + 
+				 len(n.priorityQueue.lowPriority)
+	
+	// 计算拥塞级别 (0-1)
+	congestionLevel := float64(queueSize) / float64(n.priorityQueue.maxSize)
+	
+	// 滑动窗口平均
+	n.congestionCtrl.congestionLevel = (n.congestionCtrl.congestionLevel*0.8) + (congestionLevel*0.2)
+	n.congestionCtrl.lastUpdate = now
+	
+	// 如果拥塞级别超过阈值，记录拥塞事件
+	if n.congestionCtrl.congestionLevel > 0.8 {
+		n.stats.CongestionEvents++
+	}
+}
+
+// GetCongestionLevel 获取当前拥塞级别
+func (n *Network) GetCongestionLevel() float64 {
+	n.congestionCtrl.mu.RLock()
+	defer n.congestionCtrl.mu.RUnlock()
+	return n.congestionCtrl.congestionLevel
+}
+
+// GetQueueStats 获取队列统计信息
+func (n *Network) GetQueueStats() map[string]interface{} {
+	return map[string]interface{}{
+		"high_priority_queue":   len(n.priorityQueue.highPriority),
+		"medium_priority_queue": len(n.priorityQueue.mediumPriority),
+		"low_priority_queue":    len(n.priorityQueue.lowPriority),
+		"total_queue_size":      len(n.priorityQueue.highPriority) + len(n.priorityQueue.mediumPriority) + len(n.priorityQueue.lowPriority),
+		"max_queue_size":        n.priorityQueue.maxSize,
+		"dropped_messages":      n.stats.DroppedMessages,
+		"congestion_level":      n.GetCongestionLevel(),
+		"bandwidth_used":        n.bandwidthLimiter.used,
+		"bandwidth_limit":       n.bandwidthLimiter.limit,
+		"bandwidth_tokens":      n.bandwidthLimiter.tokens,
+	}
+}
+
+// SetBandwidthLimit 设置带宽限制
+func (n *Network) SetBandwidthLimit(limit int64) {
+	n.bandwidthLimiter.mu.Lock()
+	defer n.bandwidthLimiter.mu.Unlock()
+	
+	n.bandwidthLimiter.limit = limit
+	n.bandwidthLimiter.bucketSize = limit
+	n.bandwidthLimiter.tokens = limit
+}
+
+// GetBandwidthUsage 获取带宽使用情况
+func (n *Network) GetBandwidthUsage() map[string]interface{} {
+	n.bandwidthLimiter.mu.RLock()
+	defer n.bandwidthLimiter.mu.RUnlock()
+	
+	usagePercent := float64(n.bandwidthLimiter.used) / float64(n.bandwidthLimiter.limit) * 100
+	
+	return map[string]interface{}{
+		"limit":         n.bandwidthLimiter.limit,
+		"used":          n.bandwidthLimiter.used,
+		"available":     n.bandwidthLimiter.limit - n.bandwidthLimiter.used,
+		"usage_percent": usagePercent,
+		"tokens":        n.bandwidthLimiter.tokens,
+		"bucket_size":   n.bandwidthLimiter.bucketSize,
+	}
+}
+
+// congestionMonitorLoop 拥塞监控循环
+func (n *Network) congestionMonitorLoop() {
+	ticker := time.NewTicker(5 * time.Second) // 每5秒检查一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		case <-ticker.C:
+			n.updateCongestionLevel()
+		}
+	}
 }
 
 // IsRunning 检查网络是否正在运行
