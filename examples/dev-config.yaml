@@ -1,0 +1,32 @@
+# ShardMatrix 开发环境配置
+# Development configuration for ShardMatrix node
+node:
+  node_id: "dev-node"
+  data_dir: "./dev-data"
+  log_level: "debug"
+
+network:
+  listen_addr: ":8546"
+  max_peers: 10
+  bootstrap_nodes: []
+
+api:
+  enabled: true
+  listen_addr: ":8545"
+  cors_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
+  rate_limit: 1000
+
+consensus:
+  type: "dpos"
+  is_validator: true
+  block_time: "2s"
+  genesis_time: 0  # 将在init时自动设置
+
+storage:
+  type: "memory"  # 开发环境使用内存存储
+  cache_size: "64mb"
+
+monitoring:
+  enabled: true
+  metrics_addr: ":9090"
+  health_check_interval: "10s"

@@ -1,0 +1,39 @@
+# ShardMatrix Node Configuration
+# 节点基础配置
+node:
+  node_id: "shardmatrix-node-1"      # 节点唯一标识符
+  data_dir: "./data"                  # 数据存储目录
+  log_level: "info"                   # 日志级别: debug, info, warn, error, fatal
+
+# 网络配置
+network:
+  listen_addr: ":8546"                # P2P监听地址
+  max_peers: 50                       # 最大连接节点数
+  bootstrap_nodes: []                 # 引导节点列表
+    # - "node1.shardmatrix.network:8546"
+    # - "node2.shardmatrix.network:8546"
+
+# API配置
+api:
+  enabled: true                       # 是否启用API服务器
+  listen_addr: ":8545"                # HTTP API监听地址
+  cors_origins: ["*"]                 # CORS允许的源
+  rate_limit: 100                     # 请求频率限制
+
+# 共识配置
+consensus:
+  type: "dpos"                        # 共识类型（当前支持dpos）
+  is_validator: true                  # 是否作为验证者运行
+  block_time: "2s"                    # 区块间隔时间
+  genesis_time: 1696521600            # 创世区块时间戳（自动生成）
+
+# 存储配置
+storage:
+  type: "leveldb"                     # 存储类型: leveldb, memory
+  cache_size: "128mb"                 # 缓存大小
+
+# 监控配置
+monitoring:
+  enabled: true                       # 是否启用监控
+  metrics_addr: ":9090"               # 指标收集地址
+  health_check_interval: "30s"        # 健康检查间隔
