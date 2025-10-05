@@ -50,7 +50,8 @@ ShardMatrix 采用创新的分片架构设计：
   - 右子分片：`shardID = self.ShardID * 2 + 1`
 
 分片树结构示例：
-``mermaid
+
+```mermaid
 graph TD
     Shard1["Shard 1<br/>(ID: 1)"] --> Shard2["Shard 2<br/>(ID: 2)"]
     Shard1 --> Shard3["Shard 3<br/>(ID: 3)"]
